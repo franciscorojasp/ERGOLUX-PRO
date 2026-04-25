@@ -1,0 +1,15 @@
+{
+  "name": "ERGOLUX Pro",
+  "description": "Sistema avanzado para estudios de iluminancia industrial bajo norma COVENIN 2249-93. Reportes técnicos automáticos, gestión de mantenimientos y base de conocimiento normativa integrada.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "Estudio de iluminancia media profesional",
+    "Generación de reportes PDF multi-idioma",
+    "Gestión de temas (Claro, Medio, Oscuro)",
+    "Anexos documentales (Certificados, Minutas)",
+    "Programación de mantenimiento preventivo/correctivo"
+  ]
+}

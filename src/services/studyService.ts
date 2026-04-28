@@ -46,14 +46,35 @@ export const studyService = {
   },
 
   /**
-   * Mock sync with Google Sheets.
-   * In production, this would call an Express endpoint or a Google Apps Script Webhook.
+   * Real sync with Google Sheets via Apps Script Web App.
    */
   async syncToSheets(data: any) {
-    console.log('Sincronizando con Google Sheets...', data);
-    // Simulating API delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    return { success: true };
+    const backendUrl = import.meta.env.VITE_BACKEND_URL;
+    if (!backendUrl) {
+      console.warn('VITE_BACKEND_URL no está definida. Usando modo offline.');
+      return { success: true, offline: true };
+    }
+
+    try {
+      console.log('Sincronizando con Google Sheets...', data);
+      const response = await fetch(backendUrl, {
+        method: 'POST',
+        redirect: 'follow',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8', // Using text/plain to avoid preflight in some cases
+        },
+        body: JSON.stringify({
+          type: 'SYNC_STUDY',
+          payload: data
+        }),
+      });
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Error al sincronizar con el backend:', error);
+      throw error;
+    }
   },
 
   /**
@@ -61,11 +82,58 @@ export const studyService = {
    */
   getWhatsAppShareUrl(data: any) {
     const areasText = data.areas.map((a: any) => {
-      const avgLux = a.readings.reduce((sum: number, r: any) => sum + r.illuminance, 0) / a.readings.length;
+      const avgLux = a.readings.reduce((sum: number, r: any) => sum + (r.illuminanceDiurnal || r.illuminance || 0), 0) / a.readings.length;
       return `*${a.name}*: Avg ${avgLux.toFixed(1)} Lux (${avgLux >= a.standardLux ? 'CONFORME' : 'NO CONFORME'})`;
     }).join('\n');
     const text = `*Reporte de Iluminancia Lumex Study*\n\nProyecto: ${data.projectName}\nEmpresa: ${data.company}\nFecha: ${data.date}\n\n*Resumen por Áreas:*\n${areasText}\n\nPuede ver el reporte detallado en el sistema.`;
     return `https://wa.me/?text=${encodeURIComponent(text)}`;
+  },
+
+  /**
+   * Formats email message with PDF attachment
+   */
+  getEmailShareUrl(data: any) {
+    const subject = `Reporte de Iluminancia - ${data.projectName}`;
+    const body = `Estimado/a,\n\nAdjunto encontrarás el reporte de iluminancia para el proyecto:\n${data.projectName}\n\nEmpresa: ${data.company}\nFecha: ${data.date}\n\nSaludos cordiales.`;
+    return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  },
+
+  /**
+   * Fetches projects from the backend.
+   */
+  async getProjects() {
+    const backendUrl = import.meta.env.VITE_BACKEND_URL;
+    if (!backendUrl) return [];
+
+    try {
+      const response = await fetch(`${backendUrl}?action=GET_PROJECTS`, {
+        redirect: 'follow'
+      });
+      const result = await response.json();
+      return result.projects || [];
+    } catch (error) {
+      console.error('Error al obtener proyectos:', error);
+      return [];
+    }
+  },
+
+  /**
+   * Fetches settings (Contractors and Clients) from the backend.
+   */
+  async getSettings() {
+    const backendUrl = import.meta.env.VITE_BACKEND_URL;
+    if (!backendUrl) return { contractors: [], clients: [] };
+
+    try {
+      const response = await fetch(`${backendUrl}?action=GET_SETTINGS`, {
+        redirect: 'follow'
+      });
+      const result = await response.json();
+      return result || { contractors: [], clients: [] };
+    } catch (error) {
+      console.error('Error al obtener configuraciones:', error);
+      return { contractors: [], clients: [] };
+    }
   },
 
   /**

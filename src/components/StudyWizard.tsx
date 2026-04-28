@@ -23,6 +23,8 @@ const studySchema = z.object({
   clientId: z.string().min(1, 'Contratante requerido'),
   projectName: z.string().min(3, 'Nombre requerido'),
   company: z.string().min(3, 'Sede/Planta requerida'),
+  clientAddress: z.string().optional(),
+  worksiteAddress: z.string().optional(),
   date: z.string(),
   status: z.enum(['in_progress', 'pending_approval', 'completed', 'archived']),
   samplingType: z.enum(['diurnal', 'diurnal_nocturnal']),
@@ -47,6 +49,21 @@ const studySchema = z.object({
   recommendations: z.string().optional(),
   layoutPdf: z.any().optional(),
   panoramicPhoto: z.any().optional(),
+  dimensions: z.object({
+    length: z.number().optional(),
+    width: z.number().optional(),
+    height: z.number().optional()
+  }).optional(),
+  weatherConditions: z.object({
+    diurnal: z.object({
+      temperature: z.number().optional(),
+      humidity: z.number().optional()
+    }).optional(),
+    nocturnal: z.object({
+      temperature: z.number().optional(),
+      humidity: z.number().optional()
+    }).optional()
+  }).optional(),
   areas: z.array(z.object({
     name: z.string().min(1, 'Nombre de área requerido'),
     standardLux: z.number().min(0, 'Valor requerido'),
@@ -59,7 +76,8 @@ const studySchema = z.object({
       lampType: z.string().optional(),
       latitude: z.number(),
       longitude: z.number(),
-      photo: z.any().optional()
+      photo: z.any().optional(),
+      observation: z.string().optional()
     })).min(1, 'Debe haber al menos un punto en el área')
   })).min(1, 'Debe haber al menos un área de estudio'),
   attachments: z.array(z.object({
@@ -95,6 +113,8 @@ export default function StudyWizard() {
       clientId: settings.activeClientId,
       projectName: '',
       company: settings.clients.find(c => c.id === settings.activeClientId)?.address || '',
+      clientAddress: settings.clients.find(c => c.id === settings.activeClientId)?.address || '',
+      worksiteAddress: settings.clients.find(c => c.id === settings.activeClientId)?.addressWorksite || '',
       date: new Date().toISOString().split('T')[0],
       status: 'in_progress',
       samplingType: 'diurnal',
@@ -109,6 +129,11 @@ export default function StudyWizard() {
       executiveSummary: '',
       conclusions: '',
       recommendations: '',
+      dimensions: {},
+      weatherConditions: {
+        diurnal: { temperature: 25, humidity: 60 },
+        nocturnal: { temperature: 22, humidity: 65 }
+      },
       areas: [{ 
         name: 'Área General', 
         standardLux: 300, 
@@ -138,15 +163,41 @@ export default function StudyWizard() {
     name: "attachments"
   });
 
+  // Calcular iluminancia media en tiempo real
+  const [areaAverages, setAreaAverages] = useState<Record<string, { diurnal: number; nocturnal: number; combined: number }>>({});
+
+  React.useEffect(() => {
+    const areas = watch('areas');
+    const samplingType = watch('samplingType');
+    const averages: Record<string, { diurnal: number; nocturnal: number; combined: number }> = {};
+
+    areas.forEach((area: any, index: number) => {
+      const readings = area.readings || [];
+      if (readings.length > 0) {
+        const diurnalSum = readings.reduce((sum: number, r: any) => sum + (r.illuminanceDiurnal || r.illuminance || 0), 0);
+        const nocturnalSum = readings.reduce((sum: number, r: any) => sum + (r.illuminanceNocturnal || 0), 0);
+        
+        const diurnalAvg = diurnalSum / readings.length;
+        const nocturnalAvg = nocturnalSum / readings.length;
+        const combinedAvg = samplingType === 'diurnal_nocturnal' ? (diurnalAvg + nocturnalAvg) / 2 : diurnalAvg;
+
+        averages[area.id] = { diurnal: diurnalAvg, nocturnal: nocturnalAvg, combined: combinedAvg };
+      } else {
+        averages[area.id] = { diurnal: 0, nocturnal: 0, combined: 0 };
+      }
+    });
+
+    setAreaAverages(averages);
+  }, [watch('areas'), watch('samplingType')]);
+
   const onSubmit = async (data: StudyFormValues) => {
     setIsSaving(true);
     try {
       await studyService.syncToSheets(data);
       setSavedData(data);
-      setStep(3); // Success step
+      setStep(4); // Success step
       toast.success('Estudio guardado y sincronizado exitosamente');
       
-      // If was a draft, we can delete it or mark it as completed
       if (currentDraftId) {
         await studyService.deleteDraft(currentDraftId);
         loadDrafts();
@@ -244,16 +295,25 @@ export default function StudyWizard() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto pb-20" id="study-wizard-root">
-      <div className="mb-8 flex items-center justify-between">
+    <div className="max-w-4xl mx-auto pb-20 animate-in fade-in duration-700" id="study-wizard-root">
+      <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Registro de Estudio</h1>
-          <p className="text-slate-500 italic">Determinación de conformidad de iluminancia media.</p>
+          <h1 className="text-4xl font-black text-foreground tracking-tight text-gradient">{t('wizard.title')}</h1>
+          <p className="text-primary font-medium uppercase tracking-[0.2em] text-[10px] mt-2">{t('wizard.subtitle')}</p>
         </div>
-        <div className="flex gap-2 text-sm font-bold uppercase tracking-widest text-slate-400">
-          <span className={cn(step === 1 && "text-blue-600")}>01 General</span>
-          <span>/</span>
-          <span className={cn(step === 2 && "text-blue-600")}>02 Puntos</span>
+        <div className="flex gap-4 text-[10px] font-black uppercase tracking-widest">
+          {[
+            { id: 1, label: `01 ${t('wizard.steps.general')}` },
+            { id: 2, label: `02 ${t('wizard.steps.points')}` },
+            { id: 3, label: `03 ${t('wizard.steps.review')}` }
+          ].map((s) => (
+            <div key={s.id} className={cn(
+              "px-4 py-2 rounded-full border transition-all duration-500",
+              step === s.id ? "bg-primary/20 border-primary text-primary shadow-[0_0_20px_rgba(var(--primary-rgb),0.2)]" : "bg-card/50 border-border text-muted-foreground"
+            )}>
+              {s.label}
+            </div>
+          ))}
         </div>
       </div>
 
@@ -261,21 +321,21 @@ export default function StudyWizard() {
         {step === 1 && (
           <div className="space-y-6">
             {drafts.length > 0 && (
-              <Card className="border-amber-200 bg-amber-50/20">
+              <Card className="border-amber-500/30 bg-amber-500/5">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <Save size={16} className="text-amber-500" />
-                    Borradores Guardados ({drafts.length})
+                  <CardTitle className="text-sm font-bold flex items-center gap-2 text-amber-500">
+                    <Save size={16} />
+                    {t('wizard.drafts.title')} ({drafts.length})
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">
                     {drafts.map((draft) => (
-                      <div key={draft.draftId} className="flex items-center justify-between p-3 bg-white border border-amber-100 rounded-lg shadow-sm">
+                      <div key={draft.draftId} className="flex items-center justify-between p-3 bg-card border border-border rounded-lg shadow-sm">
                         <div>
-                          <p className="font-bold text-slate-900 text-sm">{draft.projectName || 'Estudio sin nombre'}</p>
-                          <p className="text-[10px] text-slate-500 uppercase tracking-widest">
-                            Actualizado: {new Date(draft.lastUpdated).toLocaleString()} • {draft.samplingType === 'diurnal' ? 'Diurno' : 'Diurno/Nocturno'}
+                          <p className="font-bold text-foreground text-sm">{draft.projectName || t('wizard.drafts.unnamed')}</p>
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-widest">
+                            {t('wizard.drafts.updated')}: {new Date(draft.lastUpdated).toLocaleString()} • {draft.samplingType === 'diurnal' ? t('wizard.sampling.diurnal') : t('wizard.sampling.diurnalNocturnal')}
                           </p>
                         </div>
                         <div className="flex gap-2">
@@ -284,9 +344,9 @@ export default function StudyWizard() {
                             variant="outline" 
                             size="sm" 
                             onClick={() => handleLoadDraft(draft)}
-                            className="bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 text-[10px] font-black"
+                            className="bg-amber-500/10 border-amber-500/20 text-amber-500 hover:bg-amber-500/20 text-[10px] font-black"
                           >
-                            CARGAR
+                            {t('common.load')}
                           </Button>
                           <Button 
                             type="button" 
@@ -296,7 +356,7 @@ export default function StudyWizard() {
                               await studyService.deleteDraft(draft.draftId);
                               loadDrafts();
                             }}
-                            className="text-slate-300 hover:text-red-500"
+                            className="text-muted-foreground hover:text-red-500"
                           >
                             <Trash2 size={16} />
                           </Button>
@@ -308,148 +368,292 @@ export default function StudyWizard() {
               </Card>
             )}
 
-            <Card>
-            <CardHeader>
-              <CardTitle>Información General</CardTitle>
+            <Card className="glass-card overflow-hidden">
+            <CardHeader className="border-b border-border bg-card/50">
+              <CardTitle className="text-xl font-black text-foreground flex items-center gap-2">
+                <div className="w-1.5 h-6 bg-primary rounded-full" />
+                {t('wizard.general.title')}
+              </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
-                    <Label htmlFor="contractorId" className="text-blue-900 font-bold mb-2 block">Empresa Prestadora (Contratista)</Label>
+            <CardContent className="p-8 space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2 group">
+                    <Label htmlFor="contractorId" className="text-xs font-black text-muted-foreground uppercase tracking-widest">{t('wizard.general.contractor')}</Label>
                     <select 
                       id="contractorId"
-                      className="w-full h-11 px-3 bg-white border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none font-bold text-blue-900"
+                      className="w-full h-12 px-4 bg-background border border-border rounded-2xl text-sm font-bold text-foreground focus:border-primary/50 focus:ring-4 focus:ring-primary/10 outline-none transition-all appearance-none"
                       {...register('contractorId')}
                     >
                       {settings.contractors.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={c.id} className="bg-card text-foreground">{c.name}</option>
                       ))}
                     </select>
-                    <p className="text-[10px] text-blue-600 mt-2 italic">Entidad que realiza el estudio técnico.</p>
-                 </div>
+                  </div>
 
-                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
-                    <Label htmlFor="clientId" className="text-slate-900 font-bold mb-2 block">Empresa Solicitante (Contratante)</Label>
+                  <div className="space-y-2 group">
+                    <Label htmlFor="clientId" className="text-xs font-black text-muted-foreground uppercase tracking-widest">{t('wizard.general.client')}</Label>
                     <select 
                       id="clientId"
-                      className="w-full h-11 px-3 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-500 outline-none font-bold text-slate-900"
+                      className="w-full h-12 px-4 bg-background border border-border rounded-2xl text-sm font-bold text-foreground focus:border-primary/50 focus:ring-4 focus:ring-primary/10 outline-none transition-all appearance-none"
                       {...register('clientId')}
                     >
                       {settings.clients.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={c.id} className="bg-card text-foreground">{c.name}</option>
                       ))}
                     </select>
-                    <p className="text-[10px] text-slate-500 mt-2 italic">Entidad que contrata el servicio.</p>
-                 </div>
+                  </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                   <Label className="text-slate-900 font-bold">Tipo de Muestreo</Label>
-                   <div className="flex gap-4">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                         <input type="radio" value="diurnal" {...register('samplingType')} className="w-4 h-4 text-blue-600" />
-                         <span className="text-sm">Diurno</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-4">
+                   <Label className="text-xs font-black text-muted-foreground uppercase tracking-widest">{t('wizard.sampling.title')}</Label>
+                   <div className="flex gap-6">
+                      <label className="flex items-center gap-3 cursor-pointer group">
+                         <div className="relative flex items-center justify-center">
+                            <input type="radio" value="diurnal" {...register('samplingType')} className="peer sr-only" />
+                            <div className="w-5 h-5 border-2 border-border rounded-full peer-checked:border-primary peer-checked:bg-primary/20 transition-all" />
+                            <div className="absolute w-2 h-2 bg-primary rounded-full scale-0 peer-checked:scale-100 transition-all" />
+                         </div>
+                         <span className="text-sm font-bold text-foreground/80 group-hover:text-foreground transition-colors">{t('wizard.sampling.diurnal')}</span>
                       </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                         <input type="radio" value="diurnal_nocturnal" {...register('samplingType')} className="w-4 h-4 text-blue-600" />
-                         <span className="text-sm">Diurno y Nocturno</span>
+                      <label className="flex items-center gap-3 cursor-pointer group">
+                         <div className="relative flex items-center justify-center">
+                            <input type="radio" value="diurnal_nocturnal" {...register('samplingType')} className="peer sr-only" />
+                            <div className="w-5 h-5 border-2 border-border rounded-full peer-checked:border-primary peer-checked:bg-primary/20 transition-all" />
+                            <div className="absolute w-2 h-2 bg-primary rounded-full scale-0 peer-checked:scale-100 transition-all" />
+                         </div>
+                         <span className="text-sm font-bold text-foreground/80 group-hover:text-foreground transition-colors">{t('wizard.sampling.diurnalNocturnal')}</span>
                       </label>
                    </div>
                 </div>
                 
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                   <Label className="text-slate-900 font-bold">Normativas de Referencia</Label>
-                   <div className="grid grid-cols-1 gap-2">
+                <div className="space-y-4">
+                   <Label className="text-xs font-black text-muted-foreground uppercase tracking-widest">{t('wizard.standards.title')}</Label>
+                   <div className="grid grid-cols-1 gap-3">
                       {[
                         { id: 'COVENIN_2249', label: 'COVENIN 2249-1993 (VZLA)' },
                         { id: 'GO_36081', label: 'GACETA OFICIAL 36.081 (VZLA)' },
-                        { id: 'OTHER_ATTACHED', label: 'OTROS (PDF ANEXOS)' }
+                        { id: 'OTHER_ATTACHED', label: t('wizard.standards.others') }
                       ].map(std => (
-                        <label key={std.id} className="flex items-center gap-2 cursor-pointer p-1 hover:bg-slate-100 rounded">
-                           <input 
-                             type="checkbox" 
-                             value={std.id} 
-                             checked={watch('selectedStandards').includes(std.id)}
-                             onChange={(e) => {
-                               const current = watch('selectedStandards');
-                               if (e.target.checked) setValue('selectedStandards', [...current, std.id]);
-                               else setValue('selectedStandards', current.filter(id => id !== std.id));
-                             }}
-                             className="w-4 h-4 rounded text-blue-600" 
-                           />
-                           <span className="text-[10px] font-bold uppercase">{std.label}</span>
+                        <label key={std.id} className="flex items-center gap-3 cursor-pointer p-3 bg-background border border-border rounded-xl hover:bg-card transition-all group">
+                           <div className="relative flex items-center justify-center">
+                              <input 
+                                type="checkbox" 
+                                value={std.id} 
+                                checked={watch('selectedStandards').includes(std.id)}
+                                onChange={(e) => {
+                                  const current = watch('selectedStandards');
+                                  if (e.target.checked) setValue('selectedStandards', [...current, std.id]);
+                                  else setValue('selectedStandards', current.filter(id => id !== std.id));
+                                }}
+                                className="peer sr-only" 
+                              />
+                              <div className="w-5 h-5 border-2 border-border rounded-md peer-checked:border-primary peer-checked:bg-primary transition-all" />
+                              <CheckCircle2 size={14} className="absolute text-foreground scale-0 peer-checked:scale-100 transition-all" />
+                           </div>
+                           <span className="text-[10px] font-black text-foreground/70 uppercase tracking-widest group-hover:text-foreground">{std.label}</span>
                         </label>
                       ))}
                    </div>
-                   {errors.selectedStandards && <p className="text-[10px] text-red-500">{errors.selectedStandards.message}</p>}
+                   {errors.selectedStandards && <p className="text-[10px] text-red-500 font-bold uppercase">{errors.selectedStandards.message}</p>}
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-border">
                 <div className="space-y-2">
-                  <Label htmlFor="projectName">Nombre del Proyecto / Área</Label>
-                  <Input id="projectName" {...register('projectName')} placeholder="Ej: Planta ABA - Mascotas" />
-                  {errors.projectName && <p className="text-xs text-red-500">{errors.projectName.message}</p>}
+                  <Label htmlFor="projectName" className="text-xs font-black text-muted-foreground uppercase tracking-widest">{t('wizard.general.projectName')}</Label>
+                  <Input 
+                    id="projectName" 
+                    {...register('projectName')} 
+                    placeholder="Ej: Planta ABA - Mascotas" 
+                    className="h-12 bg-background border-border text-foreground rounded-2xl focus:ring-primary/20"
+                  />
+                  {errors.projectName && <p className="text-xs text-red-500 font-bold">{errors.projectName.message}</p>}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="company">Sede o Instalación Específica</Label>
-                  <Input id="company" {...register('company')} placeholder="Ej: Planta Chivacoa - Almacén" />
-                  {errors.company && <p className="text-xs text-red-500">{errors.company.message}</p>}
+                  <Label htmlFor="company" className="text-xs font-black text-muted-foreground uppercase tracking-widest">{t('wizard.general.location')}</Label>
+                  <Input 
+                    id="company" 
+                    {...register('company')} 
+                    placeholder="Ej: Planta Chivacoa - Almacén" 
+                    className="h-12 bg-background border-border text-foreground rounded-2xl focus:ring-primary/20"
+                  />
+                  {errors.company && <p className="text-xs text-red-500 font-bold">{errors.company.message}</p>}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="date">Fecha del Estudio</Label>
-                  <Input id="date" type="date" {...register('date')} />
+                  <Label htmlFor="clientAddress" className="text-xs font-black text-muted-foreground uppercase tracking-widest">Dirección Fiscal (Cliente)</Label>
+                  <Input 
+                    id="clientAddress" 
+                    {...register('clientAddress')} 
+                    placeholder="Dirección fiscal del cliente" 
+                    className="h-12 bg-background border-border text-foreground rounded-2xl focus:ring-primary/20"
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="status">Estado del Proyecto</Label>
+                  <Label htmlFor="worksiteAddress" className="text-xs font-black text-muted-foreground uppercase tracking-widest">Centro de Trabajo</Label>
+                  <Input 
+                    id="worksiteAddress" 
+                    {...register('worksiteAddress')} 
+                    placeholder="Dirección del centro de trabajo" 
+                    className="h-12 bg-background border-border text-foreground rounded-2xl focus:ring-primary/20"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="date" className="text-xs font-black text-muted-foreground uppercase tracking-widest">{t('wizard.general.date')}</Label>
+                  <Input 
+                    id="date" 
+                    type="date" 
+                    {...register('date')} 
+                    className="h-12 bg-background border-border text-foreground rounded-2xl focus:ring-primary/20 [color-scheme:dark]"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="status" className="text-xs font-black text-muted-foreground uppercase tracking-widest">{t('wizard.general.status')}</Label>
                   <select 
                     id="status"
-                    className="w-full h-10 px-3 bg-white border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full h-12 px-4 bg-background border border-border rounded-2xl text-sm font-bold text-foreground focus:border-primary/50 outline-none appearance-none"
                     {...register('status')}
                   >
-                    <option value="in_progress">En Progreso</option>
-                    <option value="pending_approval">Pendiente por Aprobación</option>
-                    <option value="completed">Completado</option>
-                    <option value="archived">Archivado</option>
+                    <option value="in_progress" className="bg-card text-foreground">{t('wizard.status.inProgress')}</option>
+                    <option value="pending_approval" className="bg-card text-foreground">{t('wizard.status.pending')}</option>
+                    <option value="completed" className="bg-card text-foreground">{t('wizard.status.completed')}</option>
+                    <option value="archived" className="bg-card text-foreground">{t('wizard.status.archived')}</option>
                   </select>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-100">
-                <div className="p-4 bg-slate-900 text-white rounded-xl space-y-4">
-                  <h3 className="text-[10px] font-black uppercase tracking-widest text-blue-400 flex items-center gap-2">
-                    <Cpu size={14} /> Equipo de Medición
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6 border-t border-border">
+                <div className="p-6 bg-gradient-to-br from-primary/10 to-purple-500/10 rounded-3xl border border-border space-y-4">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-primary flex items-center gap-2">
+                    <Cpu size={16} /> {t('wizard.equipment.title')}
                   </h3>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <Label className="text-[8px] uppercase opacity-50">Marca / Modelo</Label>
-                      <Input {...register('equipmentUsed.brand')} placeholder="Marca" className="h-7 text-[10px] bg-white/10 border-white/20 text-white" />
-                      <Input {...register('equipmentUsed.model')} placeholder="Modelo" className="h-7 text-[10px] bg-white/10 border-white/20 text-white mt-1" />
+                      <Label className="text-[9px] uppercase font-black text-muted-foreground">{t('wizard.equipment.brand')}</Label>
+                      <Input {...register('equipmentUsed.brand')} placeholder="Marca" className="h-9 text-xs bg-background border-border text-foreground rounded-xl" />
+                      <Input {...register('equipmentUsed.model')} placeholder="Modelo" className="h-9 text-xs bg-background border-border text-foreground rounded-xl mt-2" />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[8px] uppercase opacity-50">Serial / Calib.</Label>
-                      <Input {...register('equipmentUsed.serial')} placeholder="Serial" className="h-7 text-[10px] bg-white/10 border-white/20 text-white" />
-                      <Input type="date" {...register('equipmentUsed.calibrationDate')} className="h-7 text-[10px] bg-white/10 border-white/20 text-white mt-1" />
+                      <Label className="text-[9px] uppercase font-black text-muted-foreground">{t('wizard.equipment.serial')}</Label>
+                      <Input {...register('equipmentUsed.serial')} placeholder="Serial" className="h-9 text-xs bg-background border-border text-foreground rounded-xl" />
+                      <Input type="date" {...register('equipmentUsed.calibrationDate')} className="h-9 text-xs bg-background border-border text-foreground rounded-xl mt-2 [color-scheme:dark]" />
                     </div>
                   </div>
                 </div>
 
                 <div className="space-y-3">
-                   <Label className="text-xs font-black uppercase text-slate-400">Resumen Ejecutivo</Label>
+                   <Label className="text-xs font-black text-muted-foreground uppercase tracking-widest">{t('report.summary')}</Label>
                    <textarea 
                      {...register('executiveSummary')}
-                     className="w-full h-24 p-3 text-xs bg-slate-50 border rounded-xl resize-none focus:ring-2 focus:ring-blue-500 outline-none"
-                     placeholder="Breve descripción del alcance y hallazgos principales..."
+                     className="w-full h-full min-h-[140px] p-4 text-sm bg-background border border-border rounded-3xl text-foreground resize-none focus:border-primary/50 outline-none transition-all"
+                     placeholder={t('wizard.general.summaryPlaceholder')}
                    />
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-100">
-                <div className="p-4 bg-slate-50 rounded-xl border border-dashed border-slate-300">
-                  <Label className="flex items-center gap-2 mb-2">
-                    <FileUp size={16} className="text-blue-600" />
-                    Layout / Croquis (PDF)
+              {/* Condiciones Ambientales */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6 border-t border-border">
+                <div className="p-6 bg-gradient-to-br from-blue-500/10 to-cyan-500/10 rounded-3xl border border-border space-y-4">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-blue-500 flex items-center gap-2">
+                    <Cpu size={16} /> Condiciones Ambientales
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-3">
+                      <Label className="text-[9px] uppercase font-black text-muted-foreground">Período Diurno</Label>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Input 
+                            type="number"
+                            step="0.1"
+                            {...register('weatherConditions.diurnal.temperature')} 
+                            placeholder="25" 
+                            className="h-9 text-xs bg-background border-border text-foreground rounded-xl flex-1" 
+                          />
+                          <span className="text-[10px] font-black text-muted-foreground whitespace-nowrap">°C</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Input 
+                            type="number"
+                            step="0.1"
+                            {...register('weatherConditions.diurnal.humidity')} 
+                            placeholder="60" 
+                            className="h-9 text-xs bg-background border-border text-foreground rounded-xl flex-1" 
+                          />
+                          <span className="text-[10px] font-black text-muted-foreground whitespace-nowrap">% HR</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <Label className="text-[9px] uppercase font-black text-muted-foreground">Período Nocturno</Label>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Input 
+                            type="number"
+                            step="0.1"
+                            {...register('weatherConditions.nocturnal.temperature')} 
+                            placeholder="22" 
+                            className="h-9 text-xs bg-background border-border text-foreground rounded-xl flex-1" 
+                          />
+                          <span className="text-[10px] font-black text-muted-foreground whitespace-nowrap">°C</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Input 
+                            type="number"
+                            step="0.1"
+                            {...register('weatherConditions.nocturnal.humidity')} 
+                            placeholder="65" 
+                            className="h-9 text-xs bg-background border-border text-foreground rounded-xl flex-1" 
+                          />
+                          <span className="text-[10px] font-black text-muted-foreground whitespace-nowrap">% HR</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-6 bg-gradient-to-br from-green-500/10 to-emerald-500/10 rounded-3xl border border-border space-y-4">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-green-500 flex items-center gap-2">
+                    <Cpu size={16} /> Dimensiones del Área
+                  </h3>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[9px] uppercase font-black text-muted-foreground">Largo (m)</Label>
+                      <Input 
+                        type="number"
+                        {...register('dimensions.length')} 
+                        placeholder="0.0" 
+                        className="h-9 text-xs bg-background border-border text-foreground rounded-xl" 
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[9px] uppercase font-black text-muted-foreground">Ancho (m)</Label>
+                      <Input 
+                        type="number"
+                        {...register('dimensions.width')} 
+                        placeholder="0.0" 
+                        className="h-9 text-xs bg-background border-border text-foreground rounded-xl" 
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[9px] uppercase font-black text-muted-foreground">Alto (m)</Label>
+                      <Input 
+                        type="number"
+                        {...register('dimensions.height')} 
+                        placeholder="0.0" 
+                        className="h-9 text-xs bg-background border-border text-foreground rounded-xl" 
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6 border-t border-border">
+                <div className="p-6 bg-card rounded-3xl border border-border group hover:border-primary/30 transition-all">
+                  <Label className="flex items-center gap-3 mb-4 text-xs font-black uppercase tracking-widest text-foreground/70">
+                    <div className="p-2 bg-primary/20 rounded-lg">
+                      <FileUp size={16} className="text-primary" />
+                    </div>
+                    {t('wizard.general.layout')}
                   </Label>
                   <Input 
                     type="file" 
@@ -460,35 +664,37 @@ export default function StudyWizard() {
                         register('layoutPdf').onChange(e);
                       }
                     }}
-                    className="bg-white" 
+                    className="bg-background border-border text-foreground rounded-xl h-10 file:bg-primary file:text-foreground file:font-black file:text-[10px] file:uppercase file:border-none file:rounded-md file:mr-4 file:px-3" 
                   />
-                  <p className="text-[10px] text-slate-400 mt-2 italic">Cargue el plano con la distribución de puntos de muestreo.</p>
+                  <p className="text-[10px] text-muted-foreground mt-3 italic">{t('wizard.general.layoutHint')}</p>
                 </div>
-                <div className="p-4 bg-slate-50 rounded-xl border border-dashed border-slate-300">
-                  <Label className="flex items-center gap-2 mb-2">
-                    <Camera size={16} className="text-blue-600" />
-                    Imagen Panorámica (Área)
+                <div className="p-6 bg-card rounded-3xl border border-border group hover:border-purple-500/30 transition-all">
+                  <Label className="flex items-center gap-3 mb-4 text-xs font-black uppercase tracking-widest text-foreground/70">
+                    <div className="p-2 bg-accent/20 rounded-lg">
+                      <Camera size={16} className="text-accent" />
+                    </div>
+                    {t('wizard.general.panoramic')}
                   </Label>
-                  <Input type="file" accept="image/*" {...register('panoramicPhoto')} className="bg-white" />
-                  <p className="text-[10px] text-slate-400 mt-2 italic">Esta imagen será incluida en la portada del reporte.</p>
+                  <Input type="file" accept="image/*" {...register('panoramicPhoto')} className="bg-background border-border text-foreground rounded-xl h-10 file:bg-accent file:text-foreground file:font-black file:text-[10px] file:uppercase file:border-none file:rounded-md file:mr-4 file:px-3" />
+                  <p className="text-[10px] text-muted-foreground mt-3 italic">{t('wizard.general.panoramicHint')}</p>
                 </div>
               </div>
 
-              <div className="pt-4 flex justify-between items-center bg-blue-50 p-6 rounded-xl border border-blue-100">
+              <div className="pt-8 flex justify-between items-center bg-primary/5 p-8 rounded-3xl border border-primary/20">
                 <div>
-                   <h3 className="font-bold text-blue-900 leading-tight">Anexos Técnicos</h3>
-                   <p className="text-xs text-blue-600 italic">Cargue minutas, certificados o formas manuales.</p>
+                   <h3 className="font-black text-foreground text-lg leading-tight tracking-tight text-gradient">{t('wizard.general.attachments')}</h3>
+                   <p className="text-[10px] text-primary/70 font-bold uppercase tracking-widest mt-1">{t('wizard.general.attachmentsHint')}</p>
                 </div>
-                <Button type="button" variant="outline" size="sm" onClick={() => appendAtt({ type: 'calibration', file: null })} className="bg-white text-blue-600 border-blue-200">
-                   <Paperclip className="mr-1 h-3 w-3" /> Añadir Anexo
+                <Button type="button" variant="outline" onClick={() => appendAtt({ type: 'calibration', file: null })} className="bg-primary text-foreground font-black border-none hover:bg-primary/80 transition-all rounded-xl px-6">
+                   <Paperclip className="mr-2 h-4 w-4" /> {t('wizard.general.addAttachment')}
                 </Button>
               </div>
 
               {attFields.length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {attFields.map((field, i) => (
-                    <div key={field.id} className="flex gap-2 items-center bg-white p-3 rounded-lg border border-slate-200">
-                      <select {...register(`attachments.${i}.type`)} className="text-[10px] uppercase font-black bg-slate-100 p-1 rounded">
+                    <div key={field.id} className="flex gap-2 items-center bg-card p-3 rounded-lg border border-border">
+                      <select {...register(`attachments.${i}.type`)} className="text-[10px] uppercase font-black bg-foreground/10 p-1 rounded">
                         <option value="calibration">Calibración</option>
                         <option value="minutes">Minuta</option>
                         <option value="manual_form">Forma Manual</option>
@@ -504,7 +710,7 @@ export default function StudyWizard() {
                         }}
                         className="h-8 text-[10px]" 
                       />
-                      <Button type="button" variant="ghost" size="icon" onClick={() => removeAtt(i)} className="h-8 w-8 text-red-400">
+                      <Button type="button" variant="ghost" size="icon" onClick={() => removeAtt(i)} className="h-8 w-8 text-destructive">
                         <Trash2 size={14} />
                       </Button>
                     </div>
@@ -512,12 +718,12 @@ export default function StudyWizard() {
                 </div>
               )}
 
-              <div className="pt-4 flex justify-between gap-2">
-                <Button type="button" variant="outline" onClick={handleSaveDraft} className="flex-1">
-                   <Save className="mr-2 h-4 w-4" /> Guardar Borrador
+              <div className="pt-10 flex flex-col md:flex-row justify-between gap-4">
+                <Button type="button" variant="outline" onClick={handleSaveDraft} className="h-14 flex-1 bg-transparent border-border text-foreground font-black uppercase tracking-widest text-[10px] hover:bg-card rounded-2xl">
+                   <Save className="mr-2 h-4 w-4 text-primary" /> {t('common.saveDraft')}
                 </Button>
-                <Button type="button" onClick={() => setStep(2)} className="flex-1">
-                  {t('common.next')} <ChevronRight className="ml-2 h-4 w-4" />
+                <Button type="button" onClick={() => setStep(2)} className="h-14 flex-[2] bg-primary text-foreground font-black uppercase tracking-[0.2em] text-[11px] hover:bg-primary/80 hover:shadow-[0_0_30px_rgba(var(--primary-rgb),0.4)] transition-all duration-300 rounded-2xl group">
+                  {t('common.next')} <ChevronRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
                 </Button>
               </div>
             </CardContent>
@@ -527,13 +733,13 @@ export default function StudyWizard() {
 
         {step === 2 && (
           <div className="space-y-8">
-            <div className="flex items-center justify-between sticky top-0 z-10 bg-slate-50 py-2">
-               <div className="flex flex-col">
-                  <h2 className="text-xl font-bold text-slate-900 leading-none">Áreas y Puntos de Muestreo</h2>
-                  <p className="text-[10px] text-slate-500 mt-1 uppercase font-bold tracking-widest">Defina las áreas y cargue las mediciones</p>
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 py-6 border-b border-border">
+               <div>
+                  <h2 className="text-3xl font-black text-foreground tracking-tight text-gradient">{t('wizard.steps.points')}</h2>
+                  <p className="text-[10px] text-primary/70 mt-1 uppercase font-black tracking-[0.2em]">{t('wizard.points.addSubtitle')}</p>
                </div>
-               <Button type="button" variant="outline" size="sm" onClick={() => appendArea({ name: '', standardLux: 300, readings: [{ pointName: 'Punto 1', illuminance: 0, illuminanceDiurnal: 0, illuminanceNocturnal: 0, lightType: 'artificial', latitude: 0, longitude: 0 }] })} className="bg-white border-blue-200 text-blue-600 hover:bg-blue-50">
-                 <Plus className="mr-1 h-3 w-3" /> Añadir Área
+               <Button type="button" onClick={() => appendArea({ name: '', standardLux: 300, readings: [{ pointName: t('wizard.points.point') + ' 1', illuminance: 0, illuminanceDiurnal: 0, illuminanceNocturnal: 0, lightType: 'artificial', latitude: 0, longitude: 0 }] })} className="bg-primary text-foreground font-black text-[10px] uppercase tracking-widest hover:bg-primary/80 shadow-[0_0_20px_rgba(var(--primary-rgb),0.3)] rounded-xl px-8 h-12">
+                 <Plus className="mr-2 h-4 w-4" /> {t('wizard.points.addBtn')}
                </Button>
             </div>
 
@@ -568,63 +774,93 @@ export default function StudyWizard() {
 
                 return (
                   <Reorder.Item key={area.id} value={area}>
-                    <Card className="border-l-4 border-l-blue-600 shadow-sm overflow-hidden">
-                      <CardHeader className="bg-slate-50/50 border-b border-slate-100 flex flex-row items-center justify-between py-4">
-                        <div className="flex gap-4 items-end flex-1">
-                          <div className="flex items-center self-center mr-2 cursor-grab active:cursor-grabbing text-slate-300 hover:text-blue-600 transition-colors" title="Arrastrar para reordenar">
-                             <GripVertical size={20} />
+                    <Card className="glass-card border-l-4 border-l-primary overflow-hidden group/card hover:shadow-[0_0_40px_rgba(var(--primary-rgb),0.1)] transition-all duration-500">
+                      <CardHeader className="bg-card/50 border-b border-border flex flex-col md:flex-row items-center justify-between py-6 px-8 gap-6">
+                        <div className="flex gap-6 items-center flex-1 w-full">
+                          <div className="flex items-center cursor-grab active:cursor-grabbing text-muted-foreground hover:text-primary transition-colors" title={t('wizard.points.dragHint')}>
+                             <GripVertical size={24} />
                           </div>
-                          <div className="flex-1 max-w-xs space-y-1">
-                            <Label className="text-[10px] uppercase font-black text-slate-400">Nombre del Área / Sector</Label>
+                          <div className="flex-1 space-y-2">
+                            <Label className="text-[10px] uppercase font-black text-muted-foreground tracking-widest">{t('wizard.points.areaName')}</Label>
                             <Input 
                               {...register(`areas.${areaIndex}.name`)} 
                               placeholder="Ej: Almacén de Granos" 
-                              className="h-8 text-sm font-bold bg-white"
+                              className="h-12 text-base font-black bg-background border-border text-foreground rounded-2xl focus:border-primary/50"
                             />
                           </div>
-                          <div className="w-48 space-y-1">
-                            <Label className="text-[10px] uppercase font-black text-slate-400">Norma Aplicable (Min Lux)</Label>
+                          <div className="w-64 space-y-2">
+                            <Label className="text-[10px] uppercase font-black text-muted-foreground tracking-widest">{t('wizard.points.standard')}</Label>
                             <select 
-                              className="w-full text-xs bg-white border border-slate-200 rounded p-1 h-8 outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                              className="w-full h-12 text-sm bg-background border border-border text-foreground rounded-2xl px-4 outline-none focus:border-primary/50 font-black appearance-none"
                               {...register(`areas.${areaIndex}.standardLux`, { valueAsNumber: true })}
                             >
                               {COVENIN_2249_STANDARDS.map(s => (
-                                <option key={s.area} value={s.minLux}>{s.area} ({s.minLux} Lux)</option>
+                                <option key={s.area} value={s.minLux} className="bg-card text-foreground">{s.area} ({s.minLux} Lux)</option>
                               ))}
                             </select>
                           </div>
                         </div>
-                        <div className="flex items-center gap-6">
+                        <div className="flex items-center gap-8 bg-card/80 p-4 rounded-3xl border border-border">
                            {isDiurnalNocturnal ? (
                              <>
-                               <div className="text-right">
-                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Media Diurna</p>
-                                  <p className={cn("text-base font-black leading-none", avgDiurnal >= targetLux ? "text-green-600" : "text-amber-500")}>
-                                    {avgDiurnal.toFixed(1)} <span className="text-[9px] opacity-70">Lux</span>
+                               <div className="text-center px-4">
+                                  <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-1">{t('report.averageDiurnal')}</p>
+                                  <p className={cn("text-2xl font-black leading-none", avgDiurnal >= targetLux ? "text-primary drop-shadow-[0_0_10px_rgba(var(--primary-rgb),0.3)]" : "text-amber-500")}>
+                                    {avgDiurnal.toFixed(1)} <span className="text-xs opacity-50 font-medium">Lx</span>
                                   </p>
                                </div>
-                               <div className="text-right">
-                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Media Nocturna</p>
-                                  <p className={cn("text-base font-black leading-none", avgNocturnal >= targetLux ? "text-green-600" : "text-amber-500")}>
-                                    {avgNocturnal.toFixed(1)} <span className="text-[9px] opacity-70">Lux</span>
+                               <div className="w-px h-8 bg-border" />
+                               <div className="text-center px-4">
+                                  <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-1">{t('report.averageNocturnal')}</p>
+                                  <p className={cn("text-2xl font-black leading-none", avgNocturnal >= targetLux ? "text-primary drop-shadow-[0_0_10px_rgba(var(--primary-rgb),0.3)]" : "text-amber-500")}>
+                                    {avgNocturnal.toFixed(1)} <span className="text-xs opacity-50 font-medium">Lx</span>
                                   </p>
                                </div>
                              </>
                            ) : (
-                             <div className="text-right">
-                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Media Area</p>
-                                <p className={cn("text-lg font-black leading-none", isCompliant ? "text-green-600" : "text-amber-500")}>
-                                  {avgDiurnal.toFixed(1)} <span className="text-[10px] opacity-70">Lux</span>
+                             <div className="text-right px-4">
+                                <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1">{t('report.average')}</p>
+                                <p className={cn("text-xl font-black leading-none", isCompliant ? "text-primary" : "text-amber-500")}>
+                                  {avgDiurnal.toFixed(1)} <span className="text-[10px] opacity-70">Lx</span>
                                 </p>
                              </div>
                            )}
-                           <Button type="button" variant="ghost" size="icon" onClick={() => removeArea(areaIndex)} className="text-slate-300 hover:text-red-500">
-                              <Trash2 size={18} />
-                           </Button>
+                           
+                           <div className="flex items-center gap-4 border-l border-border pl-4">
+                               <div className="space-y-0.5">
+                                 <p className="text-[8px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.count')}</p>
+                                 <Input 
+                                   type="number" 
+                                   placeholder="#"
+                                   className="w-12 h-7 text-[10px] font-black bg-background border-border text-foreground rounded-lg text-center"
+                                   onKeyDown={(e) => {
+                                     if (e.key === 'Enter') {
+                                       e.preventDefault();
+                                       const val = parseInt((e.target as HTMLInputElement).value);
+                                       if (val > 0) {
+                                         const readings = Array.from({ length: val }, (_, i) => ({
+                                           pointName: `${t('wizard.points.point')} ${i + 1}`,
+                                           illuminance: 0,
+                                           illuminanceDiurnal: 0,
+                                           illuminanceNocturnal: 0,
+                                           lightType: 'artificial' as const,
+                                           latitude: 0,
+                                           longitude: 0
+                                         }));
+                                         setValue(`areas.${areaIndex}.readings`, readings as any);
+                                       }
+                                     }
+                                   }}
+                                 />
+                               </div>
+                               <Button type="button" variant="ghost" size="icon" onClick={() => removeArea(areaIndex)} className="text-muted-foreground hover:text-red-500 transition-colors">
+                                  <Trash2 size={18} />
+                               </Button>
+                            </div>
                         </div>
                       </CardHeader>
                       <CardContent className="p-0">
-                        <div className="divide-y divide-slate-100">
+                        <div className="divide-y divide-border bg-card/30">
                           {areaReadings.map((reading, pointIndex) => {
                             const diurnalVal = reading.illuminanceDiurnal || reading.illuminance || 0;
                             const nocturnalVal = reading.illuminanceNocturnal || 0;
@@ -633,89 +869,88 @@ export default function StudyWizard() {
                             
                             return (
                               <div key={pointIndex} className={cn(
-                                "p-4 grid gap-4 items-center bg-white hover:bg-slate-50/50 transition-colors",
+                                "p-6 grid gap-6 items-center hover:bg-card/50 transition-all duration-300",
                                 isDiurnalNocturnal ? "grid-cols-1 md:grid-cols-5" : "grid-cols-1 md:grid-cols-4"
                               )}>
-                                <div className="space-y-1">
-                                  <Label className="text-[9px] font-bold text-slate-400 uppercase">Punto</Label>
+                                <div className="space-y-2">
+                                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.pointName')}</Label>
                                   <Input 
                                     {...register(`areas.${areaIndex}.readings.${pointIndex}.pointName`)} 
                                     placeholder="Nombre" 
-                                    className="h-8 text-xs"
+                                    className="h-10 text-xs font-bold bg-background border-border text-foreground rounded-xl"
                                   />
                                 </div>
                                 
                                 {isDiurnalNocturnal ? (
                                   <>
-                                    <div className="space-y-1">
-                                      <Label className="text-[9px] font-bold text-slate-400 uppercase">Diurno (Lux)</Label>
+                                    <div className="space-y-2">
+                                      <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.luxDiurnal')}</Label>
                                       <div className="relative">
                                         <Input 
                                           type="number"
                                           {...register(`areas.${areaIndex}.readings.${pointIndex}.illuminanceDiurnal`, { valueAsNumber: true })} 
-                                          className={cn("h-8 text-xs pr-8 font-bold", isDiurnalBelow && "border-amber-200 bg-amber-50/30")}
+                                          className={cn("h-10 text-sm pr-10 font-black bg-background border-border text-foreground rounded-xl", isDiurnalBelow ? "border-amber-500/50 text-amber-400" : "text-primary")}
                                         />
-                                        <div className="absolute right-2 top-1.5">
-                                          {isDiurnalBelow ? <AlertCircle size={14} className="text-amber-500" /> : <CheckCircle2 size={14} className="text-green-500" />}
+                                        <div className="absolute right-3 top-2.5">
+                                          {isDiurnalBelow ? <AlertCircle size={16} className="text-amber-500" /> : <CheckCircle2 size={16} className="text-primary shadow-[0_0_10px_rgba(var(--primary-rgb),0.5)]" />}
                                         </div>
                                       </div>
                                     </div>
-                                    <div className="space-y-1">
-                                      <Label className="text-[9px] font-bold text-slate-400 uppercase">Nocturno (Lux)</Label>
+                                    <div className="space-y-2">
+                                      <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.luxNocturnal')}</Label>
                                       <div className="relative">
                                         <Input 
                                           type="number"
                                           {...register(`areas.${areaIndex}.readings.${pointIndex}.illuminanceNocturnal`, { valueAsNumber: true })} 
-                                          className={cn("h-8 text-xs pr-8 font-bold", isNocturnalBelow && "border-slate-200")}
+                                          className={cn("h-10 text-sm pr-10 font-black bg-background border-border text-foreground rounded-xl", isNocturnalBelow ? "border-amber-500/50 text-amber-400" : "text-primary")}
                                         />
-                                        <div className="absolute right-2 top-1.5">
-                                          {isNocturnalBelow ? <AlertCircle size={14} className="text-amber-500" /> : <CheckCircle2 size={14} className="text-green-500" />}
+                                        <div className="absolute right-3 top-2.5">
+                                          {isNocturnalBelow ? <AlertCircle size={16} className="text-amber-500" /> : <CheckCircle2 size={16} className="text-primary shadow-[0_0_10px_rgba(var(--primary-rgb),0.5)]" />}
                                         </div>
                                       </div>
                                     </div>
                                   </>
                                 ) : (
-                                  <div className="space-y-1">
-                                    <Label className="text-[9px] font-bold text-slate-400 uppercase">Iluminancia (Lux)</Label>
+                                  <div className="space-y-2">
+                                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.lux')}</Label>
                                     <div className="relative">
                                       <Input 
                                         type="number"
                                         {...register(`areas.${areaIndex}.readings.${pointIndex}.illuminance`, { valueAsNumber: true })} 
-                                        className={cn("h-8 text-xs pr-8 font-bold", isDiurnalBelow && "border-amber-200 bg-amber-50/30")}
+                                        className={cn("h-10 text-sm pr-10 font-black bg-background border-border text-foreground rounded-xl", isDiurnalBelow ? "border-amber-500/50 text-amber-400" : "text-primary")}
                                       />
-                                      <div className="absolute right-2 top-1.5">
-                                        {isDiurnalBelow ? <AlertCircle size={14} className="text-amber-500" /> : <CheckCircle2 size={14} className="text-green-500" />}
+                                      <div className="absolute right-3 top-2.5">
+                                        {isDiurnalBelow ? <AlertCircle size={16} className="text-amber-500" /> : <CheckCircle2 size={16} className="text-primary shadow-[0_0_10px_rgba(var(--primary-rgb),0.5)]" />}
                                       </div>
                                     </div>
                                   </div>
                                 )}
                                 
-                                <div className="space-y-1">
-                                  <Label className="text-[9px] font-bold text-slate-400 uppercase">Fuente / Lámpara</Label>
+                                <div className="space-y-2">
+                                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.lampType')}</Label>
                                   <select 
-                                    className="w-full h-8 px-2 text-xs bg-white border border-slate-200 rounded outline-none"
+                                    className="w-full h-10 px-3 text-xs bg-background border border-border text-foreground rounded-xl outline-none focus:border-primary/50 appearance-none font-bold"
                                     {...register(`areas.${areaIndex}.readings.${pointIndex}.lampType`)}
                                   >
-                                    <option value="">Tipo...</option>
+                                    <option value="" className="bg-card text-foreground">{t('common.select')}...</option>
                                     {VENEZUELA_INDUSTRIAL_LAMPS.map(l => (
-                                      <option key={l.name} value={l.name}>{l.name}</option>
+                                      <option key={l.name} value={l.name} className="bg-card text-foreground">{l.name}</option>
                                     ))}
                                   </select>
                                 </div>
-                                <div className="flex gap-2 pt-4">
+                                <div className="flex gap-3 pt-6 md:pt-0">
                                   <Button 
                                     type="button" 
                                     variant="outline" 
-                                    size="sm"
-                                    className={cn("flex-1 h-8 text-[9px] font-bold", reading.latitude !== 0 && "bg-green-50 text-green-700 border-green-200")}
+                                    className={cn("h-10 flex-1 text-[10px] font-black uppercase tracking-widest bg-background border-border rounded-xl hover:bg-card", reading.latitude !== 0 && "bg-primary/20 text-primary border-primary/50 shadow-[0_0_15px_rgba(var(--primary-rgb),0.2)]")}
                                     onClick={() => captureGPSPoint(areaIndex, pointIndex)}
                                   >
-                                    <MapPin size={12} className="mr-1" /> GPS
+                                    <MapPin size={14} className="mr-2" /> GPS
                                   </Button>
                                   {!reading.photo ? (
                                     <div className="relative flex-1">
-                                      <Button type="button" variant="outline" size="sm" className="w-full h-8 text-[9px] font-bold uppercase">
-                                        <Camera size={12} className="mr-1" /> Foto
+                                      <Button type="button" variant="outline" className="w-full h-10 text-[10px] font-black uppercase tracking-widest bg-background border-border text-foreground rounded-xl hover:bg-card">
+                                        <Camera size={14} className="mr-2" /> {t('wizard.points.photoBtn')}
                                       </Button>
                                       <input 
                                         type="file" 
@@ -726,57 +961,55 @@ export default function StudyWizard() {
                                       />
                                     </div>
                                   ) : (
-                                    <div className="flex gap-1 items-center flex-1 bg-slate-50 rounded border border-slate-200 p-0.5 overflow-hidden">
+                                    <div className="flex gap-2 items-center flex-1 bg-background rounded-xl border border-border p-1 overflow-hidden">
                                        <div 
-                                         className="relative w-7 h-7 rounded overflow-hidden cursor-pointer group flex-shrink-0"
+                                         className="relative w-8 h-8 rounded-lg overflow-hidden cursor-pointer group flex-shrink-0"
                                          onClick={() => setPreviewImage(reading.photo)}
                                        >
                                          <img src={reading.photo} className="w-full h-full object-cover" />
                                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                           <Eye size={10} className="text-white" />
+                                           <Eye size={12} className="text-foreground" />
                                          </div>
                                        </div>
-                                       <p className="text-[8px] font-bold text-slate-500 truncate flex-1 uppercase px-1">IMG_{pointIndex+1}</p>
+                                       <p className="text-[8px] font-black text-muted-foreground truncate flex-1 uppercase px-1">IMG_{pointIndex+1}</p>
                                        <Button 
                                          type="button" 
                                          variant="ghost" 
                                          size="icon" 
-                                         className="h-6 w-6 text-slate-300 hover:text-red-500"
+                                         className="h-8 w-8 text-muted-foreground hover:text-red-500"
                                          onClick={() => setValue(`areas.${areaIndex}.readings.${pointIndex}.photo` as any, null)}
                                        >
-                                         <X size={12} />
+                                         <X size={14} />
                                        </Button>
                                     </div>
                                   )}
                                   <Button 
                                     type="button" 
                                     variant="ghost" 
-                                    size="sm" 
                                     onClick={() => {
                                        const current = watch(`areas.${areaIndex}.readings`);
                                        setValue(`areas.${areaIndex}.readings`, current.filter((_, i) => i !== pointIndex));
                                     }}
-                                    className="h-8 w-8 text-slate-300 hover:text-red-500"
+                                    className="h-10 w-10 text-muted-foreground hover:text-red-500 bg-background border border-border rounded-xl transition-colors"
                                   >
-                                    <Trash2 size={14} />
+                                    <Trash2 size={16} />
                                   </Button>
                                 </div>
                               </div>
                             );
                           })}
                         </div>
-                        <div className="p-3 bg-slate-50/30 flex justify-center">
+                        <div className="p-6 bg-card/10 flex justify-center border-t border-border">
                            <Button 
                             type="button" 
                             variant="ghost" 
-                            size="sm" 
-                            className="text-blue-600 hover:bg-blue-50 text-[10px] font-bold uppercase"
+                            className="text-primary hover:bg-primary/10 text-xs font-black uppercase tracking-[0.2em] transition-all"
                             onClick={() => {
                                const current = watch(`areas.${areaIndex}.readings`);
-                               setValue(`areas.${areaIndex}.readings`, [...current, { pointName: `Punto ${current.length + 1}`, illuminance: 0, illuminanceDiurnal: 0, illuminanceNocturnal: 0, lightType: 'artificial', latitude: 0, longitude: 0 }]);
+                               setValue(`areas.${areaIndex}.readings`, [...current, { pointName: `${t('wizard.points.point')} ${current.length + 1}`, illuminance: 0, illuminanceDiurnal: 0, illuminanceNocturnal: 0, lightType: 'artificial', latitude: 0, longitude: 0 }]);
                             }}
                            >
-                             <Plus className="mr-1 h-3 w-3" /> Añadir Punto en {watch(`areas.${areaIndex}.name`) || 'Área'}
+                             <Plus className="mr-2 h-4 w-4" /> {t('wizard.points.registerPoint')} {watch(`areas.${areaIndex}.name`) || t('wizard.points.area')}
                            </Button>
                         </div>
                       </CardContent>
@@ -786,58 +1019,158 @@ export default function StudyWizard() {
               })}
             </Reorder.Group>
 
-            <Card className="border-slate-200">
-               <CardHeader className="py-4">
-                  <CardTitle className="text-sm">Análisis Final del Especialista</CardTitle>
-               </CardHeader>
-               <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                       <Label className="text-[10px] font-black uppercase text-slate-400">Conclusiones del Estudio</Label>
-                       <textarea 
-                        {...register('conclusions')}
-                        placeholder="Determine si el centro de trabajo cumple globalmente..."
-                        className="w-full h-32 p-3 text-xs bg-white border border-slate-200 rounded-lg resize-none outline-none focus:ring-2 focus:ring-blue-500"
-                       />
-                    </div>
-                    <div className="space-y-2">
-                       <Label className="text-[10px] font-black uppercase text-slate-400">Recomendaciones Técnicas</Label>
-                       <textarea 
-                        {...register('recommendations')}
-                        placeholder="Sugerencias de mejora (Luminarias LED, limpieza, etc)..."
-                        className="w-full h-32 p-3 text-xs bg-white border border-slate-200 rounded-lg resize-none outline-none focus:ring-2 focus:ring-blue-500"
-                       />
-                    </div>
-                  </div>
-               </CardContent>
-            </Card>
-
-            <div className="pt-8 flex items-center justify-between border-t border-slate-200">
-              <Button type="button" variant="ghost" onClick={() => setStep(1)} disabled={isSaving}>
-                <ChevronLeft className="mr-2 h-4 w-4" /> Anterior
+            <div className="pt-10 flex items-center justify-between border-t border-border">
+              <Button 
+                type="button" 
+                variant="ghost" 
+                onClick={() => setStep(1)} 
+                className="h-12 px-8 rounded-2xl font-black uppercase text-[10px] tracking-widest text-muted-foreground hover:text-foreground hover:bg-card transition-all"
+              >
+                <ChevronLeft className="mr-2 h-4 w-4" /> {t('common.previous')}
               </Button>
-              <div className="flex gap-3">
-                <Button type="button" variant="outline" onClick={handleSaveDraft} disabled={isSaving}>
-                  <Save className="mr-2 h-4 w-4" /> Guardar Borrador
+              <div className="flex gap-4">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={handleSaveDraft} 
+                  className="h-12 px-8 rounded-2xl font-black uppercase text-[10px] tracking-widest bg-transparent border-border text-muted-foreground hover:bg-card transition-all"
+                >
+                  <Save className="mr-2 h-4 w-4" /> {t('common.saveDraft')}
                 </Button>
-                <Button type="submit" className="bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-900/10" disabled={isSaving}>
-                  {isSaving ? 'Guardando...' : <><CheckCircle2 className="mr-2 h-4 w-4" /> Finalizar y Emitir</>}
+                <Button 
+                  type="button" 
+                  onClick={() => setStep(3)} 
+                  className="h-12 px-8 rounded-2xl font-black uppercase text-[10px] tracking-widest bg-primary text-foreground hover:bg-primary/80 shadow-[0_0_20px_rgba(var(--primary-rgb),0.3)] transition-all group"
+                >
+                  {t('common.next')} <ChevronRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-all" />
                 </Button>
               </div>
             </div>
           </div>
         )}
 
-        {step === 3 && savedData && (
-          <div className="text-center py-12 space-y-8 animate-in fade-in zoom-in duration-300">
+        {step === 3 && (
+          <div className="space-y-8 animate-in slide-in-from-right duration-500">
+            <div className="py-6 border-b border-border">
+              <h2 className="text-3xl font-black text-foreground tracking-tight text-gradient">{t('wizard.steps.review')}</h2>
+              <p className="text-[10px] text-primary/70 mt-1 uppercase font-black tracking-[0.2em]">{t('wizard.review.subtitle')}</p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6">
+              {watch('areas').map((area, idx) => {
+                const isDiurnalNocturnal = watch('samplingType') === 'diurnal_nocturnal';
+                const avgDiurnal = area.readings.reduce((sum, r) => sum + (r.illuminanceDiurnal || r.illuminance || 0), 0) / area.readings.length;
+                const avgNocturnal = area.readings.reduce((sum, r) => sum + (r.illuminanceNocturnal || 0), 0) / area.readings.length;
+                const isCompliant = isDiurnalNocturnal 
+                  ? (avgDiurnal >= area.standardLux && avgNocturnal >= area.standardLux)
+                  : avgDiurnal >= area.standardLux;
+
+                return (
+                  <Card key={idx} className="glass-card overflow-hidden border-l-4 border-l-primary">
+                    <CardHeader className="bg-card/50 flex flex-row items-center justify-between p-6">
+                      <div>
+                        <h3 className="text-lg font-black text-foreground">{area.name || t('wizard.points.area')}</h3>
+                        <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest">{t('wizard.points.standard')}: {area.standardLux} Lux</p>
+                      </div>
+                      <div className={cn(
+                        "px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border",
+                        isCompliant ? "bg-primary/10 border-primary/50 text-primary" : "bg-amber-500/10 border-amber-500/50 text-amber-500"
+                      )}>
+                        {isCompliant ? t('report.compliant') : t('report.nonCompliant')}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-0 border-t border-border">
+                      <div className="grid grid-cols-2 bg-card/20 text-center divide-x divide-border">
+                        <div className="p-4">
+                          <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-1">{t('report.averageDiurnal')}</p>
+                          <p className="text-xl font-black text-foreground">{avgDiurnal.toFixed(1)} <span className="text-[10px] opacity-50">Lx</span></p>
+                        </div>
+                        <div className="p-4">
+                          <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-1">{t('report.averageNocturnal')}</p>
+                          <p className="text-xl font-black text-foreground">{isDiurnalNocturnal ? `${avgNocturnal.toFixed(1)} Lx` : 'N/A'}</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+
+            <Card className="glass-card border-none overflow-hidden shadow-2xl">
+               <CardHeader className="bg-card/50 border-b border-border p-8">
+                  <CardTitle className="text-xl font-black text-foreground flex items-center gap-3">
+                    <div className="w-1.5 h-6 bg-primary rounded-full" />
+                    {t('wizard.review.analysisTitle')}
+                  </CardTitle>
+               </CardHeader>
+               <CardContent className="p-8 space-y-8">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="space-y-3">
+                       <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{t('report.conclusions')}</Label>
+                       <textarea 
+                        {...register('conclusions')}
+                        placeholder={t('wizard.review.conclusionsPlaceholder')}
+                        className="w-full h-40 p-4 text-sm bg-background border border-border text-foreground rounded-[2rem] resize-none outline-none focus:border-primary/50 transition-all"
+                       />
+                    </div>
+                    <div className="space-y-3">
+                       <Label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">{t('report.recommendations')}</Label>
+                       <textarea 
+                        {...register('recommendations')}
+                        placeholder={t('wizard.review.recommendationsPlaceholder')}
+                        className="w-full h-40 p-4 text-sm bg-background border border-border text-foreground rounded-[2rem] resize-none outline-none focus:border-primary/50 transition-all"
+                       />
+                    </div>
+                  </div>
+               </CardContent>
+            </Card>
+
+            <div className="pt-10 flex items-center justify-between border-t border-border">
+              <Button 
+                type="button" 
+                variant="ghost" 
+                onClick={() => setStep(2)} 
+                disabled={isSaving}
+                className="h-12 px-8 rounded-2xl font-black uppercase text-[10px] tracking-widest text-muted-foreground hover:text-foreground hover:bg-card transition-all"
+              >
+                <ChevronLeft className="mr-2 h-4 w-4" /> {t('common.previous')}
+              </Button>
+              <div className="flex gap-4">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={handleSaveDraft} 
+                  disabled={isSaving}
+                  className="h-12 px-8 rounded-2xl font-black uppercase text-[10px] tracking-widest bg-transparent border-border text-muted-foreground hover:bg-card transition-all"
+                >
+                  <Save className="mr-2 h-4 w-4" /> {t('common.saveDraft')}
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={isSaving}
+                  className="h-12 px-8 rounded-2xl font-black uppercase text-[10px] tracking-widest bg-primary text-foreground hover:bg-primary/80 shadow-[0_0_20px_rgba(var(--primary-rgb),0.3)] transition-all"
+                >
+                  {isSaving ? (
+                    t('common.processing')
+                  ) : (
+                    <><CheckCircle2 className="mr-2 h-4 w-4" /> {t('wizard.review.finishBtn')}</>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {step === 4 && savedData && (
+          <div className="text-center py-10 space-y-10 animate-in fade-in zoom-in duration-700">
             <div className="flex justify-center">
-              <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
-                <CheckCircle2 size={48} />
+              <div className="w-32 h-32 bg-primary/20 text-primary rounded-full flex items-center justify-center shadow-[0_0_50px_rgba(var(--primary-rgb),0.3)]">
+                <CheckCircle2 size={64} className="animate-pulse" />
               </div>
             </div>
             <div>
-              <h2 className="text-3xl font-bold text-slate-900">{t('study.success.title')}</h2>
-              <p className="text-slate-500 mt-2">{t('study.success.desc')}</p>
+              <h2 className="text-5xl font-black text-foreground tracking-tight text-gradient">{t('wizard.success.title')}</h2>
+              <p className="text-primary/70 font-black uppercase tracking-[0.3em] text-[10px] mt-4">{t('wizard.success.subtitle')}</p>
             </div>
 
             <div className="max-w-3xl mx-auto space-y-6">
@@ -848,100 +1181,53 @@ export default function StudyWizard() {
                  const isCompliant = isDiurnalNocturnal 
                    ? (avgDiurnal >= area.standardLux && avgNocturnal >= area.standardLux)
                    : avgDiurnal >= area.standardLux;
-                 
                  return (
-                   <Card key={idx} className="border-slate-200 overflow-hidden shadow-sm">
-                     <CardHeader className="bg-slate-50 border-b border-slate-100 flex flex-row items-center justify-between py-3">
-                       <div className="text-left">
-                         <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-700">{area.name || 'Sin Nombre'}</CardTitle>
-                         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                        <Card key={idx} className="glass-card overflow-hidden border-none shadow-xl text-left">
+                     <CardHeader className="bg-foreground/5 border-b border-border flex flex-row items-center justify-between py-6 px-8">
+                        <div>
+                          <CardTitle className="text-sm font-black uppercase tracking-widest text-foreground/80">{area.name || t('wizard.points.area')}</CardTitle>
+                          <p className="text-[10px] text-primary font-bold uppercase tracking-widest mt-1">
                             {savedData.samplingType === 'diurnal_nocturnal' ? (
-                              <>D: {avgDiurnal.toFixed(1)} Lux | N: {avgNocturnal.toFixed(1)} Lux</>
+                              <>D: {avgDiurnal.toFixed(1)} Lx | N: {avgNocturnal.toFixed(1)} Lx</>
                             ) : (
-                              <>Promedio: {avgDiurnal.toFixed(1)} Lux</>
+                              <>Promedio: {avgDiurnal.toFixed(1)} Lx</>
                             )}
-                            {' '}vs Ref: {area.standardLux} Lux
+                            {' '}vs Ref: {area.standardLux} Lx
                           </p>
                        </div>
                        <div className={cn(
-                         "flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                         isCompliant ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                         "flex items-center gap-2 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border",
+                         isCompliant ? "bg-primary/10 border-primary/50 text-primary" : "bg-amber-500/10 border-amber-500/50 text-amber-500"
                        )}>
                          {isCompliant ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
-                         {isCompliant ? 'Cumple' : 'No Conforme'}
+                         {isCompliant ? t('report.compliant') : t('report.nonCompliant')}
                        </div>
                      </CardHeader>
-                     <CardContent className="p-0">
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-[11px] text-left">
-                             <thead>
-                               <tr className="border-b bg-slate-50/30 text-[9px] uppercase font-black text-slate-400">
-                                 <th className="px-4 py-2">Punto</th>
-                                  {savedData.samplingType === 'diurnal_nocturnal' ? (
-                                    <>
-                                      <th className="px-4 py-2 text-right">Diurno</th>
-                                      <th className="px-4 py-2 text-right">Nocturno</th>
-                                    </>
-                                  ) : (
-                                    <th className="px-4 py-2 text-right">Medición</th>
-                                  )}
-                                 <th className="px-4 py-2 text-center">Estado</th>
-                               </tr>
-                             </thead>
-                            <tbody className="divide-y divide-slate-50">
-                              {area.readings.map((r, i) => {
-                                const dVal = r.illuminanceDiurnal || r.illuminance || 0;
-                                const nVal = r.illuminanceNocturnal || 0;
-                                const pointCompliant = isDiurnalNocturnal 
-                                  ? (dVal >= area.standardLux && nVal >= area.standardLux)
-                                  : dVal >= area.standardLux;
-
-                                return (
-                                  <tr key={i}>
-                                    <td className="px-4 py-2 font-medium">{r.pointName}</td>
-                                    {isDiurnalNocturnal ? (
-                                      <>
-                                        <td className="px-4 py-2 text-right font-black">{dVal} Lux</td>
-                                        <td className="px-4 py-2 text-right font-black">{nVal} Lux</td>
-                                      </>
-                                    ) : (
-                                      <td className="px-4 py-2 text-right font-black">{dVal} <span className="opacity-50 font-normal">Lux</span></td>
-                                    )}
-                                    <td className="px-4 py-2 text-center">
-                                      {pointCompliant ? <CheckCircle2 size={10} className="text-green-500 inline" /> : <AlertTriangle size={10} className="text-amber-500 inline" />}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                     </CardContent>
                    </Card>
                  );
                })}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-w-2xl mx-auto">
-              <Button type="button" onClick={handleEditAgain} size="lg" variant="outline" className="h-24 flex-col gap-2 border-slate-200">
-                <Plus size={24} />
-                <span>Editar Estudio</span>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-3xl mx-auto">
+              <Button type="button" onClick={handleEditAgain} className="h-28 flex-col gap-3 glass-card border-border hover:border-primary/50 text-foreground rounded-3xl transition-all">
+                <Plus size={32} className="text-primary" />
+                <span className="text-[10px] font-black uppercase tracking-widest">{t('wizard.success.editBtn')}</span>
               </Button>
-              <Button onClick={handleDownloadPDF} size="lg" className="h-24 flex-col gap-2 bg-blue-600 hover:bg-blue-700">
-                <Download size={24} />
-                <span>{t('study.success.pdf')}</span>
+              <Button onClick={handleDownloadPDF} className="h-28 flex-col gap-3 bg-primary text-primary-foreground hover:bg-primary/80 rounded-3xl transition-all shadow-[0_0_30px_rgba(var(--primary-rgb),0.3)]">
+                <Download size={32} />
+                <span className="text-[10px] font-black uppercase tracking-widest">{t('wizard.success.pdfBtn')}</span>
               </Button>
-              <Button onClick={handleShareWhatsApp} size="lg" className="h-24 flex-col gap-2 bg-green-500 hover:bg-green-600">
-                <Share2 size={24} />
-                <span>{t('study.success.whatsapp')}</span>
+              <Button onClick={handleShareWhatsApp} className="h-28 flex-col gap-3 bg-[#25D366] text-white hover:bg-[#20b858] rounded-3xl transition-all shadow-[0_0_30px_rgba(37,211,102,0.3)]">
+                <Share2 size={32} />
+                <span className="text-[10px] font-black uppercase tracking-widest">WhatsApp</span>
               </Button>
             </div>
             
             <Button variant="ghost" onClick={() => {
               setStep(1);
               setSavedData(null);
-            }} className="text-slate-400">
-              {t('study.success.again')}
+            }} className="text-muted-foreground hover:text-foreground uppercase font-black tracking-widest text-[10px]">
+              {t('wizard.success.newBtn')}
             </Button>
 
             {/* Hidden template for PDF generation */}
@@ -956,7 +1242,7 @@ export default function StudyWizard() {
              <Button 
                 variant="ghost" 
                 size="icon" 
-                className="absolute top-4 right-4 z-50 text-white hover:bg-white/20 rounded-full"
+                className="absolute top-4 right-4 z-50 text-foreground hover:bg-foreground/20 rounded-full"
                 onClick={() => setPreviewImage(null)}
              >
                 <X size={24} />

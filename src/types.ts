@@ -13,10 +13,12 @@ export type AppSettings = {
 export type CompanyInfo = {
   name: string;
   id: string; // RIF in Venezuela
-  address: string;
+  address: string; // Dirección fiscal
+  addressWorksite?: string; // Dirección del centro de trabajo
   phone?: string;
   email?: string;
   contactPerson?: string;
+  logo?: string; // URL o base64 del logo
   technicians: Technician[];
 };
 
@@ -62,6 +64,26 @@ export type Project = {
   conclusions?: string;
   recommendations?: string;
   attachments?: Attachment[];
+  // Nuevos campos para la especificación
+  clientAddress?: string; // Dirección fiscal del cliente
+  worksiteAddress?: string; // Dirección del centro de trabajo
+  dimensions?: {
+    length?: number; // Largo en metros
+    width?: number; // Ancho en metros
+    height?: number; // Alto en metros
+  };
+  weatherConditions?: {
+    diurnal?: {
+      temperature?: number; // Temperatura en °C
+      humidity?: number; // Humedad relativa en %
+    };
+    nocturnal?: {
+      temperature?: number; // Temperatura en °C
+      humidity?: number; // Humedad relativa en %
+    };
+  };
+  panoramicPhoto?: string; // URL o base64 de la foto panorámica
+  pointPhotos?: Record<string, string>; // Mapa de pointId -> photoUrl
 };
 
 export type AreaData = {
@@ -77,6 +99,8 @@ export type Attachment = {
   type: 'minutes' | 'act' | 'calibration' | 'manual_form';
   name: string;
   url: string;
+  size?: number; // Tamaño del archivo en bytes
+  uploadedAt?: string; // Fecha de subida
 };
 
 export type Reading = {
@@ -92,15 +116,9 @@ export type Reading = {
     lng: number;
   };
   photoUri?: string;
-  maintenance?: Maintenance;
+  observation?: string; // Observaciones textuales
 };
 
-export type Maintenance = {
-  type: 'preventive' | 'corrective';
-  scheduledDate: string;
-  description: string;
-  performed?: boolean;
-};
 
 export type LampReference = {
   name: string;
@@ -120,24 +138,41 @@ export const VENEZUELA_INDUSTRIAL_LAMPS: LampReference[] = [
 export type LightingStandard = {
   area: string;
   minLux: number;
+  maxLux?: number; // Rango máximo (opcional)
   activity?: string;
-  source: 'COVENIN 2249-93' | 'RCHST' | 'BPF';
+  source: 'COVENIN 2249-93' | 'RCHST' | 'BPF' | 'RESOLUCION_082';
+  chapter?: string; // Capítulo de la norma
+  article?: string; // Artículo específico
 };
 
 export const COVENIN_2249_STANDARDS: LightingStandard[] = [
-  // COVENIN 2249-93 Tabla 1C - Alimentos
-  { area: 'Selección inicial (Materias Primas)', minLux: 300, activity: 'Industrial Alimentos', source: 'COVENIN 2249-93' },
-  { area: 'Empacado Manual', minLux: 300, activity: 'Industrial Alimentos', source: 'COVENIN 2249-93' },
-  { area: 'Almacenamiento de Productos Terminado', minLux: 200, activity: 'Logística', source: 'COVENIN 2249-93' },
-  { area: 'Inspección de Muestras', minLux: 1500, activity: 'Control de Calidad', source: 'COVENIN 2249-93' },
-  { area: 'Laboratorios (Físico-Químicos)', minLux: 750, activity: 'Análisis Técnico', source: 'COVENIN 2249-93' },
+  // COVENIN 2249-93 Tabla 1C - Alimentos (Industria)
+  { area: 'Selección inicial (Materias Primas)', minLux: 300, activity: 'Industrial Alimentos', source: 'COVENIN 2249-93', chapter: 'Tabla 1C' },
+  { area: 'Empacado Manual', minLux: 300, activity: 'Industrial Alimentos', source: 'COVENIN 2249-93', chapter: 'Tabla 1C' },
+  { area: 'Almacenamiento de Productos Terminado', minLux: 200, activity: 'Logística', source: 'COVENIN 2249-93', chapter: 'Tabla 1C' },
+  { area: 'Inspección de Muestras', minLux: 1500, activity: 'Control de Calidad', source: 'COVENIN 2249-93', chapter: 'Tabla 1C' },
+  { area: 'Laboratorios (Físico-Químicos)', minLux: 750, activity: 'Análisis Técnico', source: 'COVENIN 2249-93', chapter: 'Tabla 1C' },
+  { area: 'Análisis Químico', minLux: 500, maxLux: 750, activity: 'Análisis Técnico', source: 'COVENIN 2249-93', chapter: 'Tabla 1C' },
+  { area: 'Inspección de Empaque', minLux: 1500, activity: 'Control de Calidad', source: 'COVENIN 2249-93', chapter: 'Tabla 1C' },
   
-  // RCHST Reference
-  { area: 'Depósitos (Nivel Suelo)', minLux: 150, activity: 'Logística', source: 'RCHST' },
-  { area: 'Recibo y Despacho', minLux: 200, activity: 'Logística', source: 'RCHST' },
+  // COVENIN 2249-93 Tabla 1A - General
+  { area: 'Pasillos y Escaleras', minLux: 150, activity: 'Circulación', source: 'COVENIN 2249-93', chapter: 'Tabla 1A' },
+  { area: 'Oficinas (Trabajo de Escritura)', minLux: 500, activity: 'Administración', source: 'COVENIN 2249-93', chapter: 'Tabla 1A' },
+  { area: 'Salas de Maquinaria / Bombas', minLux: 200, activity: 'Servicios', source: 'COVENIN 2249-93', chapter: 'Tabla 1A' },
   
-  // General Areas Tabla 1A
-  { area: 'Pasillos y Escaleras', minLux: 150, activity: 'Circulación', source: 'COVENIN 2249-93' },
-  { area: 'Oficinas (Trabajo de Escritura)', minLux: 500, activity: 'Administración', source: 'COVENIN 2249-93' },
-  { area: 'Salas de Maquinaria / Bombas', minLux: 200, activity: 'Servicios', source: 'COVENIN 2249-93' },
+  // RCHST - Reglamento de las Condiciones de Higiene y Seguridad en el Trabajo
+  { area: 'Depósitos (Nivel Suelo)', minLux: 150, activity: 'Logística', source: 'RCHST', chapter: 'Capítulo VI', article: 'Art. 12' },
+  { area: 'Recibo y Despacho', minLux: 200, activity: 'Logística', source: 'RCHST', chapter: 'Capítulo VI', article: 'Art. 12' },
+  { area: 'Áreas de Trabajo General', minLux: 200, activity: 'General', source: 'RCHST', chapter: 'Capítulo VI', article: 'Art. 12' },
+  { area: 'Áreas de Control y Operación', minLux: 300, activity: 'Control', source: 'RCHST', chapter: 'Capítulo VI', article: 'Art. 12' },
+  { area: 'Áreas de Inspección Precisa', minLux: 500, activity: 'Inspección', source: 'RCHST', chapter: 'Capítulo VI', article: 'Art. 12' },
+  
+  // BPF - Buenas Prácticas de Fabricación (Gaceta Oficial N° 36.081, Artículo 14)
+  { area: 'Puntos de Inspección', minLux: 540, activity: 'Inspección', source: 'BPF', chapter: 'Artículo 14' },
+  { area: 'Locales de Fabricación', minLux: 220, activity: 'Fabricación', source: 'BPF', chapter: 'Artículo 14' },
+  { area: 'Otras Áreas del Establecimiento', minLux: 110, activity: 'General', source: 'BPF', chapter: 'Artículo 14' },
+  
+  // Resolución 082 (Envases en contacto con alimentos) - Aplica mismos valores de BPF
+  { area: 'Zonas de Inspección de Envases', minLux: 540, activity: 'Inspección', source: 'RESOLUCION_082', chapter: 'Artículo 14 (BPF)' },
+  { area: 'Áreas de Fabricación de Envases', minLux: 220, activity: 'Fabricación', source: 'RESOLUCION_082', chapter: 'Artículo 14 (BPF)' },
 ];

@@ -69,11 +69,16 @@ const studySchema = z.object({
     standardLux: z.number().min(0, 'Valor requerido'),
     readings: z.array(z.object({
       pointName: z.string().min(1, 'Punto requerido'),
+      department: z.string().optional(),
+      visualRequirement: z.enum(['low', 'medium', 'high']).default('medium'),
       illuminance: z.number().min(0, 'Debe ser positivo'), 
       illuminanceDiurnal: z.number().min(0).optional(),
       illuminanceNocturnal: z.number().min(0).optional(),
       lightType: z.enum(['natural', 'artificial', 'mixed']),
       lampType: z.string().optional(),
+      lampCount: z.number().min(0).default(0),
+      operativeLamps: z.number().min(0).default(0),
+      nonOperativeLamps: z.number().min(0).default(0),
       latitude: z.number(),
       longitude: z.number(),
       photo: z.any().optional(),
@@ -139,10 +144,15 @@ export default function StudyWizard() {
         standardLux: 300, 
         readings: [{ 
           pointName: 'Punto 1', 
+          department: '',
+          visualRequirement: 'medium',
           illuminance: 0, 
           illuminanceDiurnal: 0, 
           illuminanceNocturnal: 0, 
           lightType: 'artificial', 
+          lampCount: 0,
+          operativeLamps: 0,
+          nonOperativeLamps: 0,
           latitude: 0, 
           longitude: 0 
         }] 
@@ -833,24 +843,32 @@ export default function StudyWizard() {
                                    type="number" 
                                    placeholder="#"
                                    className="w-12 h-7 text-[10px] font-black bg-background border-border text-foreground rounded-lg text-center"
-                                   onKeyDown={(e) => {
-                                     if (e.key === 'Enter') {
-                                       e.preventDefault();
-                                       const val = parseInt((e.target as HTMLInputElement).value);
-                                       if (val > 0) {
-                                         const readings = Array.from({ length: val }, (_, i) => ({
-                                           pointName: `${t('wizard.points.point')} ${i + 1}`,
-                                           illuminance: 0,
-                                           illuminanceDiurnal: 0,
-                                           illuminanceNocturnal: 0,
-                                           lightType: 'artificial' as const,
-                                           latitude: 0,
-                                           longitude: 0
-                                         }));
-                                         setValue(`areas.${areaIndex}.readings`, readings as any);
-                                       }
-                                     }
-                                   }}
+                                         onKeyDown={(e) => {
+                                           if (e.key === 'Enter') {
+                                             e.preventDefault();
+                                             const val = parseInt((e.target as HTMLInputElement).value);
+                                             if (val > 0) {
+                                               const currentReadings = watch(`areas.${areaIndex}.readings`) || [];
+                                               const newReadings = Array.from({ length: val }, (_, i) => ({
+                                                 pointName: `${t('wizard.points.point')} ${currentReadings.length + i + 1}`,
+                                                 department: '',
+                                                 visualRequirement: 'medium',
+                                                 illuminance: 0,
+                                                 illuminanceDiurnal: 0,
+                                                 illuminanceNocturnal: 0,
+                                                 lightType: 'artificial' as const,
+                                                 lampCount: 0,
+                                                 operativeLamps: 0,
+                                                 nonOperativeLamps: 0,
+                                                 latitude: 0,
+                                                 longitude: 0
+                                               }));
+                                               setValue(`areas.${areaIndex}.readings`, [...currentReadings, ...newReadings] as any);
+                                               (e.target as HTMLInputElement).value = '';
+                                               toast.success(`${val} ${t('wizard.points.added')}`);
+                                             }
+                                           }
+                                         }}
                                  />
                                </div>
                                <Button type="button" variant="ghost" size="icon" onClick={() => removeArea(areaIndex)} className="text-muted-foreground hover:text-red-500 transition-colors">
@@ -868,136 +886,171 @@ export default function StudyWizard() {
                             const isNocturnalBelow = nocturnalVal < targetLux;
                             
                             return (
-                              <div key={pointIndex} className={cn(
-                                "p-6 grid gap-6 items-center hover:bg-card/50 transition-all duration-300",
-                                isDiurnalNocturnal ? "grid-cols-1 md:grid-cols-5" : "grid-cols-1 md:grid-cols-4"
-                              )}>
-                                <div className="space-y-2">
-                                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.pointName')}</Label>
-                                  <Input 
-                                    {...register(`areas.${areaIndex}.readings.${pointIndex}.pointName`)} 
-                                    placeholder="Nombre" 
-                                    className="h-10 text-xs font-bold bg-background border-border text-foreground rounded-xl"
-                                  />
-                                </div>
-                                
-                                {isDiurnalNocturnal ? (
-                                  <>
-                                    <div className="space-y-2">
-                                      <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.luxDiurnal')}</Label>
-                                      <div className="relative">
-                                        <Input 
-                                          type="number"
-                                          {...register(`areas.${areaIndex}.readings.${pointIndex}.illuminanceDiurnal`, { valueAsNumber: true })} 
-                                          className={cn("h-10 text-sm pr-10 font-black bg-background border-border text-foreground rounded-xl", isDiurnalBelow ? "border-amber-500/50 text-amber-400" : "text-primary")}
-                                        />
-                                        <div className="absolute right-3 top-2.5">
-                                          {isDiurnalBelow ? <AlertCircle size={16} className="text-amber-500" /> : <CheckCircle2 size={16} className="text-primary shadow-[0_0_10px_rgba(var(--primary-rgb),0.5)]" />}
-                                        </div>
-                                      </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                      <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.luxNocturnal')}</Label>
-                                      <div className="relative">
-                                        <Input 
-                                          type="number"
-                                          {...register(`areas.${areaIndex}.readings.${pointIndex}.illuminanceNocturnal`, { valueAsNumber: true })} 
-                                          className={cn("h-10 text-sm pr-10 font-black bg-background border-border text-foreground rounded-xl", isNocturnalBelow ? "border-amber-500/50 text-amber-400" : "text-primary")}
-                                        />
-                                        <div className="absolute right-3 top-2.5">
-                                          {isNocturnalBelow ? <AlertCircle size={16} className="text-amber-500" /> : <CheckCircle2 size={16} className="text-primary shadow-[0_0_10px_rgba(var(--primary-rgb),0.5)]" />}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </>
-                                ) : (
-                                  <div className="space-y-2">
-                                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.lux')}</Label>
-                                    <div className="relative">
-                                      <Input 
-                                        type="number"
-                                        {...register(`areas.${areaIndex}.readings.${pointIndex}.illuminance`, { valueAsNumber: true })} 
-                                        className={cn("h-10 text-sm pr-10 font-black bg-background border-border text-foreground rounded-xl", isDiurnalBelow ? "border-amber-500/50 text-amber-400" : "text-primary")}
-                                      />
-                                      <div className="absolute right-3 top-2.5">
-                                        {isDiurnalBelow ? <AlertCircle size={16} className="text-amber-500" /> : <CheckCircle2 size={16} className="text-primary shadow-[0_0_10px_rgba(var(--primary-rgb),0.5)]" />}
-                                      </div>
-                                    </div>
+                              <div key={pointIndex} className="p-6 border-b border-border last:border-0 hover:bg-card/50 transition-all duration-300">
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                                  <div className="space-y-1.5">
+                                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.pointName')}</Label>
+                                    <Input 
+                                      {...register(`areas.${areaIndex}.readings.${pointIndex}.pointName`)} 
+                                      placeholder="Punto" 
+                                      className="h-9 text-xs font-bold bg-background border-border text-foreground rounded-lg"
+                                    />
                                   </div>
-                                )}
-                                
-                                <div className="space-y-2">
-                                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.lampType')}</Label>
-                                  <select 
-                                    className="w-full h-10 px-3 text-xs bg-background border border-border text-foreground rounded-xl outline-none focus:border-primary/50 appearance-none font-bold"
-                                    {...register(`areas.${areaIndex}.readings.${pointIndex}.lampType`)}
-                                  >
-                                    <option value="" className="bg-card text-foreground">{t('common.select')}...</option>
-                                    {VENEZUELA_INDUSTRIAL_LAMPS.map(l => (
-                                      <option key={l.name} value={l.name} className="bg-card text-foreground">{l.name}</option>
-                                    ))}
-                                  </select>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.department')}</Label>
+                                    <Input 
+                                      {...register(`areas.${areaIndex}.readings.${pointIndex}.department`)} 
+                                      placeholder="Ej: Control de Calidad" 
+                                      className="h-9 text-xs bg-background border-border rounded-lg"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.visualReq')}</Label>
+                                    <select 
+                                      className="w-full h-9 px-3 text-xs bg-background border border-border rounded-lg outline-none focus:ring-1 focus:ring-primary/30 transition-all appearance-none cursor-pointer"
+                                      {...register(`areas.${areaIndex}.readings.${pointIndex}.visualRequirement`)}
+                                    >
+                                      <option value="low">{t('wizard.visualReq.low')}</option>
+                                      <option value="medium">{t('wizard.visualReq.medium')}</option>
+                                      <option value="high">{t('wizard.visualReq.high')}</option>
+                                    </select>
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.lampType')}</Label>
+                                    <select 
+                                      className="w-full h-9 px-3 text-xs bg-background border border-border text-foreground rounded-lg outline-none focus:border-primary/50 appearance-none font-bold"
+                                      {...register(`areas.${areaIndex}.readings.${pointIndex}.lampType`)}
+                                    >
+                                      <option value="">{t('common.select')}...</option>
+                                      {VENEZUELA_INDUSTRIAL_LAMPS.map(l => (
+                                        <option key={l.name} value={l.name}>{l.name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
                                 </div>
-                                <div className="flex gap-3 pt-6 md:pt-0">
-                                  <Button 
-                                    type="button" 
-                                    variant="outline" 
-                                    className={cn("h-10 flex-1 text-[10px] font-black uppercase tracking-widest bg-background border-border rounded-xl hover:bg-card", reading.latitude !== 0 && "bg-primary/20 text-primary border-primary/50 shadow-[0_0_15px_rgba(var(--primary-rgb),0.2)]")}
-                                    onClick={() => captureGPSPoint(areaIndex, pointIndex)}
-                                  >
-                                    <MapPin size={14} className="mr-2" /> GPS
-                                  </Button>
-                                  {!reading.photo ? (
-                                    <div className="relative flex-1">
-                                      <Button type="button" variant="outline" className="w-full h-10 text-[10px] font-black uppercase tracking-widest bg-background border-border text-foreground rounded-xl hover:bg-card">
-                                        <Camera size={14} className="mr-2" /> {t('wizard.points.photoBtn')}
-                                      </Button>
-                                      <input 
-                                        type="file" 
-                                        accept="image/*" 
-                                        capture="environment" 
-                                        className="absolute inset-0 opacity-0 cursor-pointer"
-                                        onChange={(e) => handlePhotoUpload(e, areaIndex, pointIndex)}
-                                      />
-                                    </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6 items-end">
+                                  {isDiurnalNocturnal ? (
+                                    <>
+                                      <div className="space-y-1.5">
+                                        <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.luxDiurnal')}</Label>
+                                        <div className="relative">
+                                          <Input 
+                                            type="number"
+                                            {...register(`areas.${areaIndex}.readings.${pointIndex}.illuminanceDiurnal`, { valueAsNumber: true })} 
+                                            className={cn("h-9 text-xs pr-8 font-black bg-background border-border text-foreground rounded-lg", isDiurnalBelow ? "border-amber-500/50 text-amber-400" : "text-primary")}
+                                          />
+                                          <div className="absolute right-2 top-2">
+                                            {isDiurnalBelow ? <AlertCircle size={14} className="text-amber-500" /> : <CheckCircle2 size={14} className="text-primary" />}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="space-y-1.5">
+                                        <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.luxNocturnal')}</Label>
+                                        <div className="relative">
+                                          <Input 
+                                            type="number"
+                                            {...register(`areas.${areaIndex}.readings.${pointIndex}.illuminanceNocturnal`, { valueAsNumber: true })} 
+                                            className={cn("h-9 text-xs pr-8 font-black bg-background border-border text-foreground rounded-lg", isNocturnalBelow ? "border-amber-500/50 text-amber-400" : "text-primary")}
+                                          />
+                                          <div className="absolute right-2 top-2">
+                                            {isNocturnalBelow ? <AlertCircle size={14} className="text-amber-500" /> : <CheckCircle2 size={14} className="text-primary" />}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </>
                                   ) : (
-                                    <div className="flex gap-2 items-center flex-1 bg-background rounded-xl border border-border p-1 overflow-hidden">
-                                       <div 
-                                         className="relative w-8 h-8 rounded-lg overflow-hidden cursor-pointer group flex-shrink-0"
-                                         onClick={() => setPreviewImage(reading.photo)}
-                                       >
-                                         <img src={reading.photo} className="w-full h-full object-cover" />
-                                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                           <Eye size={12} className="text-foreground" />
-                                         </div>
-                                       </div>
-                                       <p className="text-[8px] font-black text-muted-foreground truncate flex-1 uppercase px-1">IMG_{pointIndex+1}</p>
-                                       <Button 
-                                         type="button" 
-                                         variant="ghost" 
-                                         size="icon" 
-                                         className="h-8 w-8 text-muted-foreground hover:text-red-500"
-                                         onClick={() => setValue(`areas.${areaIndex}.readings.${pointIndex}.photo` as any, null)}
-                                       >
-                                         <X size={14} />
-                                       </Button>
+                                    <div className="space-y-1.5">
+                                      <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.lux')}</Label>
+                                      <div className="relative">
+                                        <Input 
+                                          type="number"
+                                          {...register(`areas.${areaIndex}.readings.${pointIndex}.illuminance`, { valueAsNumber: true })} 
+                                          className={cn("h-9 text-xs pr-8 font-black bg-background border-border text-foreground rounded-lg", isDiurnalBelow ? "border-amber-500/50 text-amber-400" : "text-primary")}
+                                        />
+                                        <div className="absolute right-2 top-2">
+                                          {isDiurnalBelow ? <AlertCircle size={14} className="text-amber-500" /> : <CheckCircle2 size={14} className="text-primary" />}
+                                        </div>
+                                      </div>
                                     </div>
                                   )}
-                                  <Button 
-                                    type="button" 
-                                    variant="ghost" 
-                                    onClick={() => {
-                                       const current = watch(`areas.${areaIndex}.readings`);
-                                       setValue(`areas.${areaIndex}.readings`, current.filter((_, i) => i !== pointIndex));
-                                    }}
-                                    className="h-10 w-10 text-muted-foreground hover:text-red-500 bg-background border border-border rounded-xl transition-colors"
-                                  >
-                                    <Trash2 size={16} />
-                                  </Button>
+                                  
+                                  <div className="space-y-1.5">
+                                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.lampCount')}</Label>
+                                    <Input type="number" {...register(`areas.${areaIndex}.readings.${pointIndex}.lampCount`, { valueAsNumber: true })} className="h-9 text-xs bg-background border-border rounded-lg" />
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2 col-span-2">
+                                    <div className="space-y-1.5">
+                                      <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.operative')}</Label>
+                                      <Input type="number" {...register(`areas.${areaIndex}.readings.${pointIndex}.operativeLamps`, { valueAsNumber: true })} className="h-9 text-xs bg-background border-border rounded-lg" />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.nonOperative')}</Label>
+                                      <Input type="number" {...register(`areas.${areaIndex}.readings.${pointIndex}.nonOperativeLamps`, { valueAsNumber: true })} className="h-9 text-xs font-bold bg-background border-border rounded-lg text-amber-500" />
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button 
+                                      type="button" 
+                                      variant="outline" 
+                                      size="icon"
+                                      className={cn("h-9 w-9 bg-background border-border rounded-lg hover:bg-card", reading.latitude !== 0 && "bg-primary/20 text-primary border-primary/50")}
+                                      onClick={() => captureGPSPoint(areaIndex, pointIndex)}
+                                      title="GPS"
+                                    >
+                                      <MapPin size={14} />
+                                    </Button>
+                                    {!reading.photo ? (
+                                      <div className="relative">
+                                        <Button type="button" variant="outline" size="icon" className="h-9 w-9 bg-background border-border text-foreground rounded-lg hover:bg-card" title="Subir Foto">
+                                          <Camera size={14} />
+                                        </Button>
+                                        <input 
+                                          type="file" 
+                                          accept="image/*" 
+                                          capture="environment" 
+                                          className="absolute inset-0 opacity-0 cursor-pointer"
+                                          onChange={(e) => handlePhotoUpload(e, areaIndex, pointIndex)}
+                                        />
+                                      </div>
+                                    ) : (
+                                      <div 
+                                        className="relative w-9 h-9 rounded-lg overflow-hidden cursor-pointer group border border-border"
+                                        onClick={() => setPreviewImage(reading.photo)}
+                                      >
+                                        <img src={reading.photo} className="w-full h-full object-cover" />
+                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                          <Eye size={12} className="text-foreground" />
+                                        </div>
+                                      </div>
+                                    )}
+                                    <Button 
+                                      type="button" 
+                                      variant="ghost" 
+                                      size="icon"
+                                      onClick={() => {
+                                         const current = watch(`areas.${areaIndex}.readings`);
+                                         setValue(`areas.${areaIndex}.readings`, current.filter((_, i) => i !== pointIndex));
+                                      }}
+                                      className="h-9 w-9 text-muted-foreground hover:text-red-500 bg-background border border-border rounded-lg transition-colors"
+                                    >
+                                      <Trash2 size={14} />
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{t('wizard.points.observations')}</Label>
+                                  <textarea 
+                                    {...register(`areas.${areaIndex}.readings.${pointIndex}.observation`)}
+                                    placeholder="Nota o detalle técnico del punto..."
+                                    className="w-full h-16 p-3 text-xs bg-background border border-border text-foreground rounded-xl resize-none outline-none focus:border-primary/50 transition-all"
+                                  />
                                 </div>
                               </div>
                             );
                           })}
+
                         </div>
                         <div className="p-6 bg-card/10 flex justify-center border-t border-border">
                            <Button 
@@ -1006,7 +1059,19 @@ export default function StudyWizard() {
                             className="text-primary hover:bg-primary/10 text-xs font-black uppercase tracking-[0.2em] transition-all"
                             onClick={() => {
                                const current = watch(`areas.${areaIndex}.readings`);
-                               setValue(`areas.${areaIndex}.readings`, [...current, { pointName: `${t('wizard.points.point')} ${current.length + 1}`, illuminance: 0, illuminanceDiurnal: 0, illuminanceNocturnal: 0, lightType: 'artificial', latitude: 0, longitude: 0 }]);
+                               setValue(`areas.${areaIndex}.readings`, [...current, {                                   pointName: `${t('wizard.points.point')} ${current.length + 1}`, 
+                                  department: '',
+                                  visualRequirement: 'medium',
+                                  illuminance: 0, 
+                                  illuminanceDiurnal: 0, 
+                                  illuminanceNocturnal: 0, 
+                                  lightType: 'artificial', 
+                                  lampCount: 0,
+                                  operativeLamps: 0,
+                                  nonOperativeLamps: 0,
+                                  latitude: 0, 
+                                  longitude: 0 
+ }]);
                             }}
                            >
                              <Plus className="mr-2 h-4 w-4" /> {t('wizard.points.registerPoint')} {watch(`areas.${areaIndex}.name`) || t('wizard.points.area')}
@@ -1018,6 +1083,36 @@ export default function StudyWizard() {
                 );
               })}
             </Reorder.Group>
+
+            <div className="flex justify-center pb-10">
+              <Button 
+                type="button" 
+                variant="outline" 
+                onClick={() => appendArea({ 
+                  name: '', 
+                  standardLux: 300, 
+                  readings: [{ 
+                    pointName: t('wizard.points.point') + ' 1', 
+                    department: '',
+                    visualRequirement: 'medium',
+                    illuminance: 0, 
+                    illuminanceDiurnal: 0, 
+                    illuminanceNocturnal: 0, 
+                    lightType: 'artificial', 
+                    lampCount: 0,
+                    operativeLamps: 0,
+                    nonOperativeLamps: 0,
+                    latitude: 0, 
+                    longitude: 0,
+                    observation: ''
+                  }] 
+                })} 
+                className="h-14 px-10 rounded-2xl font-black uppercase text-[11px] tracking-[0.2em] bg-background border-primary/20 text-primary hover:bg-primary/10 transition-all border-dashed border-2 shadow-xl hover:shadow-primary/10"
+              >
+                <Plus className="mr-3 h-5 w-5" /> {t('wizard.points.addBtn')}
+              </Button>
+            </div>
+
 
             <div className="pt-10 flex items-center justify-between border-t border-border">
               <Button 

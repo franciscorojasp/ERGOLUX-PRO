@@ -109,8 +109,15 @@ export const studyService = {
       const response = await fetch(`${backendUrl}?action=GET_PROJECTS`, {
         redirect: 'follow'
       });
-      const result = await response.json();
-      return result.projects || [];
+      
+      const text = await response.text();
+      try {
+        const result = JSON.parse(text);
+        return result.projects || [];
+      } catch (parseError) {
+        console.error('Error al parsear JSON de proyectos. Respuesta recibida:', text);
+        return [];
+      }
     } catch (error) {
       console.error('Error al obtener proyectos:', error);
       return [];
@@ -128,8 +135,15 @@ export const studyService = {
       const response = await fetch(`${backendUrl}?action=GET_SETTINGS`, {
         redirect: 'follow'
       });
-      const result = await response.json();
-      return result || { contractors: [], clients: [] };
+      
+      const text = await response.text();
+      try {
+        const result = JSON.parse(text);
+        return result || { contractors: [], clients: [] };
+      } catch (parseError) {
+        console.error('Error al parsear JSON de configuraciones. Respuesta recibida:', text);
+        return { contractors: [], clients: [] };
+      }
     } catch (error) {
       console.error('Error al obtener configuraciones:', error);
       return { contractors: [], clients: [] };
